@@ -1,7 +1,6 @@
 package com.duties.ui
 
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateDpAsState
@@ -42,6 +41,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -50,16 +50,19 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
-import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
@@ -176,19 +179,21 @@ fun CreatePage(
         val current = pagerState.currentPage
         val last = STEPS.lastIndex
         val firstCascadeUsed = remember { BooleanArray(1).also { it[0] = initiallyFolded } }
-        val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
         // fold: 0 = guide open, 1 = guide sucked into the button
         val fold = remember { Animatable(if (initiallyFolded) 1f else 0f) }
         var collapsed by remember { mutableStateOf(initiallyFolded) }
         val showPages by remember { derivedStateOf { fold.value < 0.999f } }
+        val foldProvider = remember { { fold.value } }
+        // centre of the button (root coordinates): where the elements are pulled into / come out of
+        var suckTarget by remember { mutableStateOf(Offset.Unspecified) }
 
         fun collapse() {
             scope.launch {
                 collapsed = true
                 onCollapsedChange(true)
-                // slow start, fast end: like something being pulled in
-                fold.animateTo(1f, tween(680, easing = CubicBezierEasing(0.5f, 0f, 0.8f, 0.3f)))
+                // linear here: every element eases in by itself (see Suck), nearest ones first
+                fold.animateTo(1f, tween(820, easing = LinearEasing))
             }
         }
 
@@ -197,7 +202,7 @@ fun CreatePage(
                 round++
                 collapsed = false
                 onCollapsedChange(false)
-                fold.animateTo(0f, tween(820, easing = EXPO_OUT))
+                fold.animateTo(0f, tween(900, easing = LinearEasing))
             }
         }
 
@@ -205,22 +210,14 @@ fun CreatePage(
             // the pages go edge to edge (sides and bottom of the screen), nothing clips them early
             if (showPages) {
                 key(round) {
+                    CompositionLocalProvider(
+                        LocalFold provides foldProvider,
+                        LocalSuckTarget provides suckTarget
+                    ) {
                     HorizontalPager(
                         state = pagerState,
                         userScrollEnabled = !collapsed,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .graphicsLayer {
-                                // the guide shrinks towards the button (centre, just above the tab bar), fades and blurs
-                                val e = fold.value
-                                val buttonY = size.height - navBottom.toPx() - 135.dp.toPx()
-                                transformOrigin = TransformOrigin(0.5f, (buttonY / size.height).coerceIn(0f, 1f))
-                                val k = 1f - 0.97f * e
-                                scaleX = k
-                                scaleY = k
-                                alpha = 1f - seg(e, 0.55f, 1f)
-                                renderEffect = blurEffect(16.dp.toPx() * e)
-                            }
+                        modifier = Modifier.fillMaxSize()
                     ) { page ->
                         // page 0 uses the tab's cascade the first time; every later entrance starts a new one
                         val pageCascade = remember {
@@ -248,6 +245,7 @@ fun CreatePage(
                             StepPage(index = page, step = STEPS[page], dark = dark, cascade = pageCascade)
                         }
                     }
+                    }
                 }
             }
 
@@ -264,6 +262,7 @@ fun CreatePage(
                     last = last,
                     collapsed = collapsed,
                     dark = dark,
+                    onTarget = { suckTarget = it },
                     onBack = {
                         if (current > 0 && !collapsed) scope.launch {
                             pagerState.animateScrollToPage(
@@ -312,6 +311,7 @@ private fun Controls(
     last: Int,
     collapsed: Boolean,
     dark: Boolean,
+    onTarget: (Offset) -> Unit,
     onBack: () -> Unit,
     onPrimary: () -> Unit
 ) {
@@ -340,11 +340,14 @@ private fun Controls(
                 .fillMaxWidth()
                 .navigationBarsPadding()
                 .padding(bottom = 108.dp)
+                // centre of the row = where the pill ends up (the guide is pulled into this point)
+                .onGloballyPositioned { onTarget(it.boundsInRoot().center) }
         ) {
             val backW = 112.dp * backFrac
             val gap = 10.dp * backFrac
-            val pillW = lerp(maxWidth - backW - gap, smallW, e)
-            val pillH = lerp(54.dp, 46.dp, e)
+            val m = SETTLE.transform(seg(e, 0.45f, 1f))      // the pill shrinks while the guide arrives in it
+            val pillW = lerp(maxWidth - backW - gap, smallW, m)
+            val pillH = lerp(54.dp, 46.dp, m)
             Row(
                 Modifier.fillMaxWidth().height(54.dp),
                 horizontalArrangement = Arrangement.Center,
@@ -388,12 +391,12 @@ private fun Controls(
                         stringResource(if (current == last) R.string.done else R.string.create_next),
                         maxLines = 1,
                         softWrap = false,
-                        modifier = Modifier.graphicsLayer { alpha = 1f - seg(e, 0f, 0.45f) },
+                        modifier = Modifier.graphicsLayer { alpha = 1f - seg(m, 0f, 0.45f) },
                         style = TextStyle(color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                     )
                     // ... and "read the rules again" fades in
                     Row(
-                        Modifier.graphicsLayer { alpha = seg(e, 0.55f, 1f) },
+                        Modifier.graphicsLayer { alpha = seg(m, 0.55f, 1f) },
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         GlyphIcon(R.drawable.ic_refresh, Color.White, 20.dp)
@@ -407,12 +410,77 @@ private fun Controls(
 }
 
 // =====================================================================
+// Suction (HyperSpring Emerge, run backwards)
+// =====================================================================
+/** 0 = guide open, 1 = guide sucked into the button. */
+private val LocalFold = staticCompositionLocalOf<() -> Float> { { 0f } }
+
+/** Centre of the button, in root coordinates (Unspecified until the button was laid out). */
+private val LocalSuckTarget = compositionLocalOf { Offset.Unspecified }
+
+/**
+ * The look of HyperSpring's Emerge (small, blurry, shifted towards a point  ->  sharp in its place), driven
+ * by the fold: while the guide folds, each element is pulled to the centre of the button, shrinking, blurring
+ * and fading; when it opens again it comes back out of the same point. The elements nearest to the button
+ * go first and the far ones follow, so it feels like being sucked in.
+ */
+@Composable
+private fun Suck(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    val fold = LocalFold.current
+    val target = LocalSuckTarget.current
+    var center by remember { mutableStateOf(Offset.Unspecified) }
+    Box(
+        modifier
+            .onGloballyPositioned { center = it.boundsInRoot().center }
+            .graphicsLayer {
+                val f = fold()
+                if (f <= 0f) return@graphicsLayer
+                val c = center
+                if (c == Offset.Unspecified || target == Offset.Unspecified) {
+                    alpha = 0f                      // not placed yet: do not flash for a frame
+                    return@graphicsLayer
+                }
+                val far = ((c - target).getDistance() / 700.dp.toPx()).coerceIn(0f, 1f)
+                val s = ((f - 0.32f * far) / 0.68f).coerceIn(0f, 1f)   // this element's own progress
+                val e = s * s                                          // accelerates: pulled in
+                translationX = (target.x - c.x) * e
+                translationY = (target.y - c.y) * e
+                val k = 1f - 0.88f * e
+                scaleX = k
+                scaleY = k
+                alpha = 1f - seg(s, 0.5f, 1f)
+                renderEffect = blurEffect(16.dp.toPx() * s)
+            }
+    ) { content() }
+}
+
+/** One element of a page: it can be sucked into the button, and enters with Reveal (the tab's cascade). */
+@Composable
+private fun Element(
+    cascade: Cascade,
+    instant: Boolean,
+    modifier: Modifier = Modifier,
+    dy: Dp = 22.dp,
+    content: @Composable () -> Unit
+) {
+    val delay = remember { cascade.take() }
+    Suck(modifier.fillMaxWidth()) {
+        if (instant) Box(Modifier.fillMaxWidth()) { content() }
+        else Reveal(delayMs = delay, modifier = Modifier.fillMaxWidth(), dy = dy, content = content)
+    }
+}
+
+// =====================================================================
 // One page
 // =====================================================================
 @Composable
 private fun StepPage(index: Int, step: StepInfo, dark: Boolean, cascade: Cascade) {
     val textColor = if (dark) Color.White else Color(0xFF101114)
     val subColor = if (dark) Color(0xFFB0B3B8) else Color(0xFF55586A)
+    // a page born while the guide comes out of the button does not fade in by itself: its elements already
+    // come out of the button (Suck), so Reveal would hide them a second time
+    val foldNow = LocalFold.current
+    val instant = remember { foldNow() > 0.001f }
 
     // room under the content so the last item can scroll above the dots + buttons
     val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
@@ -423,7 +491,7 @@ private fun StepPage(index: Int, step: StepInfo, dark: Boolean, cascade: Cascade
             .padding(start = 24.dp, end = 24.dp, top = 6.dp, bottom = 200.dp + navBottom)
     ) {
         // badge (Required / Optional / Guide) + step counter
-        Reveal(delayMs = remember { cascade.take() }, modifier = Modifier.fillMaxWidth(), dy = 12.dp) {
+        Element(cascade, instant, dy = 12.dp) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 StepBadge(stringResource(step.badge), step.color, textColor)
                 if (index > 0) {
@@ -438,7 +506,7 @@ private fun StepPage(index: Int, step: StepInfo, dark: Boolean, cascade: Cascade
         Spacer(Modifier.height(14.dp))
 
         // illustration
-        Reveal(delayMs = remember { cascade.take() }, modifier = Modifier.fillMaxWidth()) {
+        Element(cascade, instant) {
             HeroCard(dark) {
                 when (step.kind) {
                     StepKind.Overview -> OverviewHero()
@@ -452,7 +520,7 @@ private fun StepPage(index: Int, step: StepInfo, dark: Boolean, cascade: Cascade
         }
         Spacer(Modifier.height(18.dp))
 
-        Reveal(delayMs = remember { cascade.take() }, modifier = Modifier.fillMaxWidth()) {
+        Element(cascade, instant) {
             BasicText(
                 stringResource(step.title),
                 style = TextStyle(
@@ -462,7 +530,7 @@ private fun StepPage(index: Int, step: StepInfo, dark: Boolean, cascade: Cascade
             )
         }
         Spacer(Modifier.height(8.dp))
-        Reveal(delayMs = remember { cascade.take() }, modifier = Modifier.fillMaxWidth()) {
+        Element(cascade, instant) {
             BasicText(
                 stringResource(step.body),
                 style = TextStyle(
@@ -474,7 +542,7 @@ private fun StepPage(index: Int, step: StepInfo, dark: Boolean, cascade: Cascade
         Spacer(Modifier.height(14.dp))
 
         if (step.kind == StepKind.Overview) {
-            Reveal(delayMs = remember { cascade.take() }, modifier = Modifier.fillMaxWidth(), dy = 12.dp) {
+            Element(cascade, instant, dy = 12.dp) {
                 ChipsGroup(
                     label = stringResource(R.string.create_badge_required),
                     color = REQUIRED_COLOR,
@@ -488,7 +556,7 @@ private fun StepPage(index: Int, step: StepInfo, dark: Boolean, cascade: Cascade
                 )
             }
             Spacer(Modifier.height(12.dp))
-            Reveal(delayMs = remember { cascade.take() }, modifier = Modifier.fillMaxWidth(), dy = 12.dp) {
+            Element(cascade, instant, dy = 12.dp) {
                 ChipsGroup(
                     label = stringResource(R.string.create_badge_optional),
                     color = OPTIONAL_COLOR,
@@ -502,7 +570,7 @@ private fun StepPage(index: Int, step: StepInfo, dark: Boolean, cascade: Cascade
             }
         } else {
             step.tips.forEach { tip ->
-                Reveal(delayMs = remember { cascade.take() }, modifier = Modifier.fillMaxWidth(), dy = 11.dp) {
+                Element(cascade, instant, dy = 11.dp) {
                     TipRow(stringResource(tip), step.color, subColor)
                 }
                 Spacer(Modifier.height(10.dp))
