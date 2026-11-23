@@ -8,6 +8,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -76,6 +77,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.coerceAtLeast
 import com.duties.R
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.catalog.components.LiquidButton
@@ -161,7 +163,8 @@ private val STEPS = listOf(
  * continues it, so its elements follow the title just like on the other tabs.
  *
  * When the last page's "Done" is pressed the whole guide is sucked into that button, which shrinks into a small
- * "read the rules again" button. Pressing it brings the guide back out. [startCollapsed] / [onCollapsedChange]
+ * "read the rules again" button, which then rises like a droplet while "Create channel" drips out under it (empty action for now).
+ * Pressing "read the rules again" brings the guide back out and "Create channel" is pulled back in. [startCollapsed] / [onCollapsedChange]
  * let the caller remember that the guide was already read (so it stays folded when you come back to the tab).
  */
 @Composable
@@ -171,7 +174,8 @@ fun CreatePage(
     backdrop: Backdrop,
     modifier: Modifier = Modifier,
     startCollapsed: Boolean = false,
-    onCollapsedChange: (Boolean) -> Unit = {}
+    onCollapsedChange: (Boolean) -> Unit = {},
+    onCreateChannel: () -> Unit = {}
 ) {
     // all the text here is Arabic, like the other detail screens
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
@@ -268,6 +272,7 @@ fun CreatePage(
                     dark = dark,
                     backdrop = backdrop,
                     onTarget = { suckTarget = it },
+                    onCreate = onCreateChannel,
                     onBack = {
                         if (current > 0 && !collapsed) scope.launch {
                             pagerState.animateScrollToPage(
@@ -318,6 +323,7 @@ private fun Controls(
     dark: Boolean,
     backdrop: Backdrop,
     onTarget: (Offset) -> Unit,
+    onCreate: () -> Unit,
     onBack: () -> Unit,
     onPrimary: () -> Unit
 ) {
@@ -335,6 +341,25 @@ private fun Controls(
         animationSpec = spring(dampingRatio = 0.8f, stiffness = 300f),
         label = "backPill"
     )
+
+    // ---- after the guide was swallowed: the small pill rises like a droplet and "Create channel" drips out under it
+    val settled = collapsed && e >= 0.999f
+    val rise by animateFloatAsState(
+        targetValue = if (settled) 1f else 0f,
+        animationSpec = if (settled) spring(dampingRatio = 0.5f, stiffness = 140f)       // bouncy, like a drop
+        else tween(420, easing = FastOutSlowInEasing),
+        label = "rise"
+    )
+    val create = remember { Animatable(if (settled) 1f else 0f) }
+    LaunchedEffect(settled) {
+        if (settled) {
+            delay(260)                                                                     // after the drop started rising
+            create.animateTo(1f, spring(dampingRatio = 0.58f, stiffness = 170f))
+        } else {
+            create.animateTo(0f, tween(340, easing = FastOutSlowInEasing))                 // pulled back into the pill
+        }
+    }
+    val riseDp = 74.dp
 
     Column(modifier) {
         Box(Modifier.fillMaxWidth().graphicsLayer { alpha = 1f - seg(e, 0f, 0.35f) }) {
@@ -354,6 +379,47 @@ private fun Controls(
             val m = SETTLE.transform(seg(e, 0.45f, 1f))      // the pill shrinks while the guide arrives in it
             val pillW = lerp(maxWidth - backW - gap, smallW, m)
             val pillH = lerp(54.dp, 46.dp, m)
+
+            // ---- Create channel (appears only while the rules are folded; empty action for now)
+            val cf = create.value
+            if (cf > 0.01f) {
+                val smallBtn = 46.dp
+                val bw = lerp(smallBtn, maxWidth, cf.coerceIn(0f, 1f))
+                val bh = lerp(smallBtn, 54.dp, cf.coerceIn(0f, 1f))
+                Box(Modifier.fillMaxWidth().height(54.dp), contentAlignment = Alignment.Center) {
+                    LiquidButton(
+                        onClick = { if (create.value > 0.9f) onCreate() },
+                        backdrop = backdrop,
+                        tint = BUTTON_ORANGE,
+                        modifier = Modifier
+                            .width(bw.coerceAtLeast(smallBtn))
+                            .height(bh)
+                            .graphicsLayer {
+                                // it falls out of the droplet: starts up at the pill, drops to its place
+                                translationY = -riseDp.toPx() * (1f - cf)
+                                alpha = seg(cf, 0f, 0.2f)
+                                renderEffect = blurEffect(10.dp.toPx() * (1f - seg(cf, 0f, 0.7f)))
+                            }
+                    ) {
+                        Box(Modifier.wrapContentWidth(unbounded = true), contentAlignment = Alignment.Center) {
+                            Row(
+                                Modifier.graphicsLayer { alpha = seg(cf, 0.45f, 0.85f) },
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                GlyphIcon(R.drawable.ic_plus, Color.White, 22.dp)
+                                Spacer(Modifier.width(8.dp))
+                                BasicText(
+                                    stringResource(R.string.create_channel),
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    style = TextStyle(color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             Row(
                 Modifier.fillMaxWidth().height(54.dp),
                 horizontalArrangement = Arrangement.Center,
@@ -400,8 +466,12 @@ private fun Controls(
                         .graphicsLayer {
                             // a small "gulp" when the guide reaches the button
                             val g = 1f + 0.07f * sin(PI.toFloat() * seg(e, 0.75f, 1f))
-                            scaleX = g
-                            scaleY = g
+                            // droplet: it lifts off (spring overshoot makes it wobble), stretched tall while moving
+                            val r = rise
+                            val travel = sin(PI.toFloat() * r.coerceIn(0f, 1f))
+                            translationY = -riseDp.toPx() * r
+                            scaleX = g * (1f - 0.14f * travel)
+                            scaleY = g * (1f + 0.22f * travel)
                         }
                 ) {
                     // both labels sit on top of each other and cross-fade; unbounded so they never wrap while it shrinks
