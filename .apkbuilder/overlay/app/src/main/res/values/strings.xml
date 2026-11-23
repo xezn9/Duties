@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Duties</string>
+    <string name="tab_home">Home</string>
+    <string name="tab_create">Create</string>
+    <string name="tab_account">Account</string>
+    <string name="login_subtitle">Sign in to keep your duties in sync.</string>
+    <string name="continue_google">Continue with Google</string>
+    <string name="signing_in">Signing in…</string>
+    <string name="sign_out">Sign out</string>
+    <string name="setup_title">Firebase is not set up</string>
+    <string name="setup_body">Add google-services.json to the app/ folder (download it again from Firebase after adding the SHA-1), then rebuild.</string>
+    <string name="google_not_ready">Google sign-in is not ready yet. Add the SHA-1 in Firebase, download google-services.json again and rebuild.</string>
+
+    <!-- Account / profile -->
+    <string name="add_status">أضف حالة +</string>
+    <string name="edit_account_title">تعديل الحساب</string>
+    <string name="edit_account_subtitle">خصّص ملفك الشخصي</string>
+    <string name="save">حفظ</string>
+    <string name="change">تغيير</string>
+    <string name="move">تحريك</string>
+    <string name="remove">إزالة</string>
+    <string name="done">تم</string>
+    <string name="field_name">اسم الحساب</string>
+    <string name="field_username">اسم المستخدم (اليوزر)</string>
+    <string name="field_bio">النبذة</string>
+    <string name="bio_hint">اكتب شي عن نفسك</string>
+    <string name="move_banner_title">حرّك البانر</string>
+    <string name="move_banner_hint">اسحب الصورة لاختيار الجزء الي يظهر بالبانر</string>
+    <string name="move_avatar_title">حرّك الصورة</string>
+    <string name="move_avatar_hint">اسحب لتحريك الصورة، وقرّب بإصبعين للتكبير</string>
+    <string name="error_name_empty">اكتب اسم للحساب</string>
+    <string name="error_username_short">اليوزر لازم يكون 3 احرف على الاقل</string>
+    <string name="error_image_load">ما گدرت افتح الصورة</string>
+    <string name="error_username_taken">اليوزر هذا مأخوذ، اختار غيره</string>
+    <string name="error_save">ما گدرت احفظ، تأكد من الانترنت وحاول مرة ثانية</string>
+</resources>
