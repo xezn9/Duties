@@ -1,6 +1,9 @@
 package com.duties.ui
 
 import android.graphics.Bitmap
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -21,7 +24,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -31,6 +33,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
@@ -64,17 +67,30 @@ fun MainScreen(dark: Boolean) {
     // Profile (name, @username, bio, photos) and the edit page that grows out of the pencil button.
     val user = remember { FirebaseAuth.getInstance().currentUser }
     val profile = rememberProfileState(user?.uid ?: "local", user?.displayName, user?.email)
-    val scope = rememberCoroutineScope()
-    val push = remember { PushController(scope) }
+    // the edit page grows out of the pencil button (its center is kept to shrink back into it)
+    var showEdit by remember { mutableStateOf(false) }
+    var penCenter by remember { mutableStateOf<Offset?>(null) }
+    val underT by animateFloatAsState(
+        targetValue = if (showEdit) 1f else 0f,
+        animationSpec = tween(380, easing = SETTLE),
+        label = "under"
+    )
+    BackHandler(enabled = showEdit) { showEdit = false }
     // banner / profile photo shown full screen (null = closed); it sits above the tab bar
     var viewImage by remember { mutableStateOf<Bitmap?>(null) }
 
-    PushStack(
-        controller = push,
-        modifier = Modifier.fillMaxSize(),
-        detail = { _ -> EditProfileScreen(profile, dark, onClose = { push.close() }) }
-    ) {
     Box(Modifier.fillMaxSize()) {
+    // the page below recedes a little (smaller + blurred) while the edit page comes out of the button
+    Box(
+        Modifier
+            .fillMaxSize()
+            .graphicsLayer {
+                val k = 1f - 0.04f * underT
+                scaleX = k
+                scaleY = k
+                renderEffect = blurEffect(14.dp.toPx() * underT)
+            }
+    ) {
         Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
             TabRevealHost(
                 selectedTab = tab,
@@ -83,7 +99,7 @@ fun MainScreen(dark: Boolean) {
             ) { index, revealBase ->
                 TabPage(
                     index, revealBase, dark, profile,
-                    onEdit = { from -> push.open("edit", from) },
+                    onEdit = { from -> penCenter = from.center; showEdit = true },
                     onViewImage = { viewImage = it }
                 )
             }
@@ -127,6 +143,10 @@ fun MainScreen(dark: Boolean) {
         }
 
         ImageViewerHost(viewImage) { viewImage = null }
+    }
+
+    OriginOverlay(visible = showEdit, origin = penCenter) {
+        EditProfileScreen(profile, dark, onClose = { showEdit = false })
     }
     }
 }
