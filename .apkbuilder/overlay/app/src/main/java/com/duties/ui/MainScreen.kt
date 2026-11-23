@@ -180,14 +180,14 @@ private fun TabPage(
             Modifier
                 .fillMaxSize()
                 .statusBarsPadding()
-                .padding(horizontal = 24.dp, vertical = 20.dp)
+                .padding(top = 20.dp)
         ) {
             SplitTitle(
                 text = stringResource(TAB_TITLES[index]),
                 delayMs = remember { cascade.take() },
                 color = textColor,
                 fontSize = 40.sp,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp)
             )
             // Create = the swipeable pages that explain how to create a channel (continues the tab's cascade).
             if (index == 1) {

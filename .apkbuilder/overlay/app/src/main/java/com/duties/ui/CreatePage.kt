@@ -20,6 +20,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -150,10 +153,11 @@ fun CreatePage(dark: Boolean, cascade: Cascade, modifier: Modifier = Modifier) {
         val last = STEPS.lastIndex
         val firstCascadeUsed = remember { BooleanArray(1) }
 
-        Column(modifier.fillMaxWidth()) {
+        Box(modifier.fillMaxWidth()) {
+            // the pages go edge to edge (sides and bottom of the screen), nothing clips them early
             HorizontalPager(
                 state = pagerState,
-                modifier = Modifier.weight(1f).fillMaxWidth()
+                modifier = Modifier.fillMaxSize()
             ) { page ->
                 // page 0 uses the tab's cascade the first time; every later entrance starts a new one
                 val pageCascade = remember {
@@ -182,7 +186,13 @@ fun CreatePage(dark: Boolean, cascade: Cascade, modifier: Modifier = Modifier) {
                 }
             }
 
-            // ---- dots + buttons
+            // ---- dots + buttons: float over the bottom of the pages
+            Column(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp)
+            ) {
             Dots(current = current, count = STEPS.size, dark = dark)
             Spacer(Modifier.height(14.dp))
             val backFrac by animateFloatAsState(
@@ -232,6 +242,7 @@ fun CreatePage(dark: Boolean, cascade: Cascade, modifier: Modifier = Modifier) {
                     }
                 }
             }
+            }
         }
     }
 }
@@ -244,11 +255,13 @@ private fun StepPage(index: Int, step: StepInfo, dark: Boolean, cascade: Cascade
     val textColor = if (dark) Color.White else Color(0xFF101114)
     val subColor = if (dark) Color(0xFFB0B3B8) else Color(0xFF55586A)
 
+    // room under the content so the last item can scroll above the dots + buttons
+    val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     Column(
         Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(top = 6.dp, bottom = 8.dp)
+            .padding(start = 24.dp, end = 24.dp, top = 6.dp, bottom = 200.dp + navBottom)
     ) {
         // badge (Required / Optional / Guide) + step counter
         Reveal(delayMs = remember { cascade.take() }, modifier = Modifier.fillMaxWidth(), dy = 12.dp) {
