@@ -73,6 +73,21 @@
     <string name="create_win_creating">جاري الإنشاء…</string>
     <string name="create_win_done">تم إنشاء القناة</string>
     <string name="create_win_error_photo">اختار صورة للقناة</string>
+    <string name="create_win_members_selected">تم اختيار %1$d · تنرسل الدعوة بعد إنشاء القناة</string>
+    <string name="create_win_search_label">ابحث عن يوزر</string>
+    <string name="create_win_search_hint">اكتب اليوزر</string>
+    <string name="create_win_searching">جاري البحث…</string>
+    <string name="create_win_search_none">ما لگيت أحد بهذا اليوزر</string>
+    <string name="create_win_search_error">ما گدرت ابحث، تأكد من الانترنت</string>
+    <string name="create_win_search_tip">اكتب حرفين من اليوزر على الاقل</string>
+    <string name="create_win_send_invite">إرسال دعوة</string>
+    <string name="create_win_invite_note">الدعوات تنرسل لما تنشئ القناة</string>
+    <string name="home_invites_title">الدعوات</string>
+    <string name="home_channels_title">القنوات</string>
+    <string name="home_invite_label">دعوة للانضمام لقناة</string>
+    <string name="home_invite_from">من @%1$s</string>
+    <string name="home_invite_accept">قبول</string>
+    <string name="home_invite_decline">رفض</string>
     <string name="home_empty">ما عندك قنوات لحد الان\nسوّي أول قناة من تاب Create وتطلع هنا مثل المحادثة</string>
 
     <string name="create_chip_photo">الصورة</string>

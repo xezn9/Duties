@@ -180,7 +180,8 @@ fun CreatePage(
     modifier: Modifier = Modifier,
     startCollapsed: Boolean = false,
     onCollapsedChange: (Boolean) -> Unit = {},
-    onSubmitChannel: suspend (name: String, username: String, bio: String, photo: Bitmap?) -> Unit = { _, _, _, _ -> }
+    onSearchUsers: suspend (String) -> List<FoundUser> = { emptyList() },
+    onSubmitChannel: suspend (name: String, username: String, bio: String, photo: Bitmap?, invitees: List<FoundUser>) -> Unit = { _, _, _, _, _ -> }
 ) {
     // all the text here is Arabic, like the other detail screens
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
@@ -300,8 +301,9 @@ fun CreatePage(
                 backdrop = backdrop,
                 draft = draft,
                 onClose = ::closeWindow,
-                onSubmit = { name, username, bio, photo ->
-                    onSubmitChannel(name, username, bio, photo)
+                onSearch = onSearchUsers,
+                onSubmit = { name, username, bio, photo, invitees ->
+                    onSubmitChannel(name, username, bio, photo, invitees)
                     clearDraft = true
                 }
             )

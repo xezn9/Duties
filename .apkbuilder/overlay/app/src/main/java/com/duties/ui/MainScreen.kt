@@ -1,6 +1,7 @@
 package com.duties.ui
 
 import android.content.Context
+import android.widget.Toast
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Image
@@ -50,6 +51,7 @@ import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.kyant.backdrop.catalog.components.LiquidBottomTab
 import com.kyant.backdrop.catalog.components.LiquidBottomTabs
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 private val TAB_TITLES = listOf(R.string.tab_home, R.string.tab_create, R.string.tab_account)
@@ -187,6 +189,10 @@ private fun TabPage(
 ) {
     val textColor = if (dark) Color.White else Color(0xFF101114)
     val cascade = remember { Cascade(revealBase) }
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val saveError = stringResource(R.string.error_save)
+    val failToast = { Toast.makeText(context, saveError, Toast.LENGTH_LONG).show() }
 
     // Account tab = the profile page (no big title, it has its own banner).
     if (index == 2) {
@@ -228,7 +234,10 @@ private fun TabPage(
                     modifier = Modifier.weight(1f),
                     startCollapsed = rulesFolded,
                     onCollapsedChange = onRulesFolded,
-                    onSubmitChannel = { name, username, bio, photo -> channels.create(name, username, bio, photo) }
+                    onSearchUsers = { q -> channels.searchUsers(q) },
+                    onSubmitChannel = { name, username, bio, photo, invitees ->
+                        channels.create(name, username, bio, photo, invitees, profile.name, profile.username)
+                    }
                 )
             }
             // Home = the channels as a chat list
@@ -236,8 +245,12 @@ private fun TabPage(
                 Spacer(Modifier.height(10.dp))
                 HomePage(
                     dark = dark,
+                    backdrop = glassBackdrop,
                     channels = channels.channels,
+                    invites = channels.invites,
                     cascade = cascade,
+                    onAccept = { inv -> scope.launch { runCatching { channels.accept(inv) }.onFailure { failToast() } } },
+                    onDecline = { inv -> scope.launch { runCatching { channels.decline(inv) }.onFailure { failToast() } } },
                     modifier = Modifier.weight(1f)
                 )
             }

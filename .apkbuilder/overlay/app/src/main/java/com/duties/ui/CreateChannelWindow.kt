@@ -2,10 +2,17 @@ package com.duties.ui
 
 import android.graphics.Bitmap
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -47,6 +54,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -129,8 +137,10 @@ internal class ChannelDraft {
     var username by mutableStateOf("")
     var bio by mutableStateOf("")
     var photo by mutableStateOf<Bitmap?>(null)
+    val invitees = mutableStateListOf<FoundUser>()       // people to invite when the channel is created
 
     fun clear() {
+        invitees.clear()
         name = ""
         username = ""
         bio = ""
@@ -164,7 +174,8 @@ internal fun CreateChannelWindow(
     backdrop: Backdrop,
     draft: ChannelDraft,
     onClose: () -> Unit,
-    onSubmit: suspend (name: String, username: String, bio: String, photo: Bitmap?) -> Unit
+    onSearch: suspend (String) -> List<FoundUser>,
+    onSubmit: suspend (name: String, username: String, bio: String, photo: Bitmap?, invitees: List<FoundUser>) -> Unit
 ) {
     val show by remember { derivedStateOf { p() > 0.0005f } }
     val contentOn by remember { derivedStateOf { p() > 0.45f } }
@@ -290,6 +301,7 @@ internal fun CreateChannelWindow(
                         draft = draft,
                         bottomGap = windowBottomGap,
                         onClose = onClose,
+                        onSearch = onSearch,
                         onSubmit = onSubmit
                     )
                 }
@@ -307,7 +319,8 @@ private fun ChannelWindowContent(
     draft: ChannelDraft,
     bottomGap: Dp,
     onClose: () -> Unit,
-    onSubmit: suspend (name: String, username: String, bio: String, photo: Bitmap?) -> Unit
+    onSearch: suspend (String) -> List<FoundUser>,
+    onSubmit: suspend (name: String, username: String, bio: String, photo: Bitmap?, invitees: List<FoundUser>) -> Unit
 ) {
     val fg = if (dark) Color.White else Color(0xFF101114)
     val inner = rememberLayerBackdrop()          // what the glass fields inside the window refract
@@ -343,7 +356,7 @@ private fun ChannelWindowContent(
         focus.clearFocus()
         scope.launch {
             try {
-                onSubmit(draft.name.trim(), draft.username, draft.bio.trim(), draft.photo)
+                onSubmit(draft.name.trim(), draft.username, draft.bio.trim(), draft.photo, draft.invitees.toList())
                 created = true
                 delay(650)
                 onClose()
@@ -356,6 +369,10 @@ private fun ChannelWindowContent(
             }
         }
     }
+
+    // ---- the small "add members" search window
+    var searching by remember { mutableStateOf(false) }
+    BackHandler(enabled = searching) { searching = false }
 
     // keyboard: only the part that really covers the window pushes the content up
     val density = LocalDensity.current
@@ -495,7 +512,7 @@ private fun ChannelWindowContent(
             )
             Spacer(Modifier.height(12.dp))
             // ---- members (optional)
-            MembersCard(bd = inner, dark = dark, fg = fg)
+            MembersCard(bd = inner, dark = dark, fg = fg, count = draft.invitees.size, onAdd = { searching = true })
 
             Spacer(Modifier.height(20.dp))
             // ---- create
@@ -518,6 +535,21 @@ private fun ChannelWindowContent(
                     style = TextStyle(color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                 )
             }
+        }
+
+        // search window (small, on top of everything in the window)
+        AnimatedVisibility(
+            visible = searching,
+            enter = fadeIn(tween(180)) + scaleIn(spring(dampingRatio = 0.75f, stiffness = 420f), initialScale = 0.88f),
+            exit = fadeOut(tween(150)) + scaleOut(tween(150), targetScale = 0.92f)
+        ) {
+            MemberSearchPopup(
+                dark = dark,
+                backdrop = inner,
+                draft = draft,
+                onSearch = onSearch,
+                onClose = { searching = false }
+            )
         }
     }
 }
@@ -587,7 +619,7 @@ private fun ChannelPhoto(photo: Bitmap?, dark: Boolean, onClick: () -> Unit) {
 
 /** "Add members" row (optional). The button does nothing yet. */
 @Composable
-private fun MembersCard(bd: Backdrop, dark: Boolean, fg: Color) {
+private fun MembersCard(bd: Backdrop, dark: Boolean, fg: Color, count: Int, onAdd: () -> Unit) {
     val shape = RoundedCornerShape(26.dp)
     Row(
         Modifier
@@ -608,13 +640,17 @@ private fun MembersCard(bd: Backdrop, dark: Boolean, fg: Color) {
             )
             Spacer(Modifier.height(2.dp))
             BasicText(
-                stringResource(R.string.create_win_members_sub),
-                style = TextStyle(color = fg.copy(alpha = 0.55f), fontSize = 12.sp)
+                if (count > 0) stringResource(R.string.create_win_members_selected, count)
+                else stringResource(R.string.create_win_members_sub),
+                style = TextStyle(
+                    color = if (count > 0) WIN_MINT else fg.copy(alpha = 0.55f),
+                    fontSize = 12.sp
+                )
             )
         }
         Spacer(Modifier.width(8.dp))
         LiquidButton(
-            onClick = { },
+            onClick = onAdd,
             backdrop = bd,
             tint = WIN_ORANGE,
             modifier = Modifier.height(40.dp)
