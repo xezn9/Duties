@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
@@ -76,6 +77,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.sp
 import com.duties.R
+import com.kyant.backdrop.Backdrop
+import com.kyant.backdrop.catalog.components.LiquidButton
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.sin
@@ -165,6 +168,7 @@ private val STEPS = listOf(
 fun CreatePage(
     dark: Boolean,
     cascade: Cascade,
+    backdrop: Backdrop,
     modifier: Modifier = Modifier,
     startCollapsed: Boolean = false,
     onCollapsedChange: (Boolean) -> Unit = {}
@@ -262,6 +266,7 @@ fun CreatePage(
                     last = last,
                     collapsed = collapsed,
                     dark = dark,
+                    backdrop = backdrop,
                     onTarget = { suckTarget = it },
                     onBack = {
                         if (current > 0 && !collapsed) scope.launch {
@@ -300,7 +305,7 @@ fun CreatePage(
 }
 
 /**
- * Dots + Back + Next/Done. [fold] (0..1) morphs the big pill into the small "read the rules again" pill:
+ * Dots + Back + Next/Done, all liquid glass buttons ([LiquidButton] over [backdrop]). [fold] (0..1) morphs the big pill into the small "read the rules again" pill:
  * the dots and Back fade away, the pill shrinks to the size of its new text and gulps once when the guide arrives.
  */
 @Composable
@@ -311,6 +316,7 @@ private fun Controls(
     last: Int,
     collapsed: Boolean,
     dark: Boolean,
+    backdrop: Backdrop,
     onTarget: (Offset) -> Unit,
     onBack: () -> Unit,
     onPrimary: () -> Unit
@@ -320,7 +326,7 @@ private fun Controls(
     val measurer = rememberTextMeasurer()
     val reopenText = stringResource(R.string.create_reopen)
     val reopenStyle = remember { TextStyle(color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold) }
-    // width of the small pill = icon + gap + text + the same side padding as the big one
+    // width of the small pill = icon + gap + text + LiquidButton's 16dp side padding (+ a little room)
     val smallW = remember(reopenText) {
         with(density) { measurer.measure(reopenText, reopenStyle).size.width.toDp() } + 20.dp + 8.dp + 36.dp
     }
@@ -353,25 +359,42 @@ private fun Controls(
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                // ---- Back (clear glass)
                 Box(
                     Modifier
                         .width(backW)
                         .height(54.dp)
-                        .clipToBounds()
-                        .graphicsLayer { alpha = backFrac }
+                        .then(if (backFrac < 0.99f) Modifier.clipToBounds() else Modifier)
                 ) {
                     if (backFrac > 0.01f) {
-                        GhostPill(
-                            text = stringResource(R.string.create_back),
-                            dark = dark,
-                            modifier = Modifier.fillMaxSize(),
-                            onClick = onBack
-                        )
+                        LiquidButton(
+                            onClick = onBack,
+                            backdrop = backdrop,
+                            surfaceColor = if (dark) Color.White.copy(alpha = 0.10f) else Color.White.copy(alpha = 0.30f),
+                            modifier = Modifier.fillMaxSize().graphicsLayer { alpha = backFrac }
+                        ) {
+                            Box(Modifier.wrapContentWidth(unbounded = true)) {
+                                BasicText(
+                                    stringResource(R.string.create_back),
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    style = TextStyle(
+                                        color = if (dark) Color.White else Color(0xFF101114),
+                                        fontSize = 18.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                )
+                            }
+                        }
                     }
                 }
                 Spacer(Modifier.width(gap))
-                Box(
-                    Modifier
+                // ---- Next / Done  ->  small "read the rules again" (orange glass)
+                LiquidButton(
+                    onClick = onPrimary,
+                    backdrop = backdrop,
+                    tint = BUTTON_ORANGE,
+                    modifier = Modifier
                         .width(pillW)
                         .height(pillH)
                         .graphicsLayer {
@@ -380,28 +403,26 @@ private fun Controls(
                             scaleX = g
                             scaleY = g
                         }
-                        .bounceClick(onClick = onPrimary)
-                        .clip(CircleShape)
-                        .background(Brush.verticalGradient(listOf(Color(0xFFDB7608), Color(0xFFC25E00))))
-                        .border(1.dp, Color(0xFFF0A95A).copy(alpha = 0.55f), CircleShape),
-                    contentAlignment = Alignment.Center
                 ) {
-                    // Next / Done fades out while the pill shrinks ...
-                    BasicText(
-                        stringResource(if (current == last) R.string.done else R.string.create_next),
-                        maxLines = 1,
-                        softWrap = false,
-                        modifier = Modifier.graphicsLayer { alpha = 1f - seg(m, 0f, 0.45f) },
-                        style = TextStyle(color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                    )
-                    // ... and "read the rules again" fades in
-                    Row(
-                        Modifier.graphicsLayer { alpha = seg(m, 0.55f, 1f) },
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        GlyphIcon(R.drawable.ic_refresh, Color.White, 20.dp)
-                        Spacer(Modifier.width(8.dp))
-                        BasicText(reopenText, maxLines = 1, softWrap = false, style = reopenStyle)
+                    // both labels sit on top of each other and cross-fade; unbounded so they never wrap while it shrinks
+                    Box(Modifier.wrapContentWidth(unbounded = true), contentAlignment = Alignment.Center) {
+                        // Next / Done fades out while the pill shrinks ...
+                        BasicText(
+                            stringResource(if (current == last) R.string.done else R.string.create_next),
+                            maxLines = 1,
+                            softWrap = false,
+                            modifier = Modifier.graphicsLayer { alpha = 1f - seg(m, 0f, 0.45f) },
+                            style = TextStyle(color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                        )
+                        // ... and "read the rules again" fades in
+                        Row(
+                            Modifier.graphicsLayer { alpha = seg(m, 0.55f, 1f) },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            GlyphIcon(R.drawable.ic_refresh, Color.White, 20.dp)
+                            Spacer(Modifier.width(8.dp))
+                            BasicText(reopenText, maxLines = 1, softWrap = false, style = reopenStyle)
+                        }
                     }
                 }
             }
@@ -669,33 +690,6 @@ private fun Dots(current: Int, count: Int, dark: Boolean) {
                     .background(if (selected) BUTTON_ORANGE else inactive)
             )
         }
-    }
-}
-
-@Composable
-private fun GhostPill(text: String, dark: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Box(
-        modifier
-            .bounceClick(onClick = onClick)
-            .clip(CircleShape)
-            .background(if (dark) Color.White.copy(alpha = 0.10f) else Color.Black.copy(alpha = 0.07f))
-            .border(
-                1.dp,
-                if (dark) Color.White.copy(alpha = 0.16f) else Color.Black.copy(alpha = 0.10f),
-                CircleShape
-            ),
-        contentAlignment = Alignment.Center
-    ) {
-        BasicText(
-            text,
-            maxLines = 1,
-            softWrap = false,
-            style = TextStyle(
-                color = if (dark) Color.White else Color(0xFF101114),
-                fontSize = 18.sp,
-                fontWeight = FontWeight.SemiBold
-            )
-        )
     }
 }
 

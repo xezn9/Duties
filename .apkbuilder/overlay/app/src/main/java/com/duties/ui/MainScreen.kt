@@ -180,8 +180,12 @@ private fun TabPage(
         return
     }
 
+    // what the glass buttons of the Create page refract: only the page background (like on the Account page)
+    val glassBackdrop = rememberLayerBackdrop()
     Box(Modifier.fillMaxSize()) {
-        AppBackground(dark, variant = index)
+        Box(Modifier.fillMaxSize().layerBackdrop(glassBackdrop)) {
+            AppBackground(dark, variant = index)
+        }
         Column(
             Modifier
                 .fillMaxSize()
@@ -201,6 +205,7 @@ private fun TabPage(
                 CreatePage(
                     dark = dark,
                     cascade = cascade,
+                    backdrop = glassBackdrop,
                     modifier = Modifier.weight(1f),
                     startCollapsed = rulesFolded,
                     onCollapsedChange = onRulesFolded
