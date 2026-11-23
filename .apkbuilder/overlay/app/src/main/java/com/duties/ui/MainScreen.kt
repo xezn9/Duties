@@ -5,8 +5,10 @@ import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -187,7 +189,12 @@ private fun TabPage(
                 fontSize = 40.sp,
                 modifier = Modifier.fillMaxWidth()
             )
-            // Home and Create stay empty for now.
+            // Create = the swipeable pages that explain how to create a channel (continues the tab's cascade).
+            if (index == 1) {
+                Spacer(Modifier.height(14.dp))
+                CreatePage(dark = dark, cascade = cascade, modifier = Modifier.weight(1f))
+            }
+            // Home stays empty for now.
         }
     }
 }
