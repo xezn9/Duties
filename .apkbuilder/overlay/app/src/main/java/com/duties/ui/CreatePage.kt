@@ -1,6 +1,7 @@
 package com.duties.ui
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateDpAsState
@@ -16,6 +17,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -40,7 +42,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -53,18 +58,24 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.sp
 import com.duties.R
+import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.sin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -142,74 +153,206 @@ private val STEPS = listOf(
 /**
  * Body of the Create tab (under the "Create" title). [cascade] is the tab's cascade: the first page
  * continues it, so its elements follow the title just like on the other tabs.
+ *
+ * When the last page's "Done" is pressed the whole guide is sucked into that button, which shrinks into a small
+ * "read the rules again" button. Pressing it brings the guide back out. [startCollapsed] / [onCollapsedChange]
+ * let the caller remember that the guide was already read (so it stays folded when you come back to the tab).
  */
 @Composable
-fun CreatePage(dark: Boolean, cascade: Cascade, modifier: Modifier = Modifier) {
+fun CreatePage(
+    dark: Boolean,
+    cascade: Cascade,
+    modifier: Modifier = Modifier,
+    startCollapsed: Boolean = false,
+    onCollapsedChange: (Boolean) -> Unit = {}
+) {
     // all the text here is Arabic, like the other detail screens
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-        val pagerState = rememberPagerState(pageCount = { STEPS.size })
+        val initiallyFolded = remember { startCollapsed }
+        // every time the guide is opened again it starts from page 0 with a fresh pager (and fresh reveals)
+        var round by remember { mutableIntStateOf(0) }
+        val pagerState = key(round) { rememberPagerState(pageCount = { STEPS.size }) }
         val scope = rememberCoroutineScope()
         val current = pagerState.currentPage
         val last = STEPS.lastIndex
-        val firstCascadeUsed = remember { BooleanArray(1) }
+        val firstCascadeUsed = remember { BooleanArray(1).also { it[0] = initiallyFolded } }
+        val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+
+        // fold: 0 = guide open, 1 = guide sucked into the button
+        val fold = remember { Animatable(if (initiallyFolded) 1f else 0f) }
+        var collapsed by remember { mutableStateOf(initiallyFolded) }
+        val showPages by remember { derivedStateOf { fold.value < 0.999f } }
+
+        fun collapse() {
+            scope.launch {
+                collapsed = true
+                onCollapsedChange(true)
+                // slow start, fast end: like something being pulled in
+                fold.animateTo(1f, tween(680, easing = CubicBezierEasing(0.5f, 0f, 0.8f, 0.3f)))
+            }
+        }
+
+        fun reopen() {
+            scope.launch {
+                round++
+                collapsed = false
+                onCollapsedChange(false)
+                fold.animateTo(0f, tween(820, easing = EXPO_OUT))
+            }
+        }
 
         Box(modifier.fillMaxWidth()) {
             // the pages go edge to edge (sides and bottom of the screen), nothing clips them early
-            HorizontalPager(
-                state = pagerState,
-                modifier = Modifier.fillMaxSize()
-            ) { page ->
-                // page 0 uses the tab's cascade the first time; every later entrance starts a new one
-                val pageCascade = remember {
-                    if (page == 0 && !firstCascadeUsed[0]) {
-                        firstCascadeUsed[0] = true
-                        cascade
-                    } else {
-                        Cascade(40)
-                    }
-                }
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .graphicsLayer {
-                            // the page sinks while it leaves (same idea as the old page in TabReveal)
-                            val off = abs((pagerState.currentPage - page) + pagerState.currentPageOffsetFraction)
-                                .coerceIn(0f, 1f)
-                            val k = 1f - 0.08f * off
-                            scaleX = k
-                            scaleY = k
-                            alpha = 1f - 0.55f * off
-                            renderEffect = blurEffect(10.dp.toPx() * off)
+            if (showPages) {
+                key(round) {
+                    HorizontalPager(
+                        state = pagerState,
+                        userScrollEnabled = !collapsed,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                // the guide shrinks towards the button (centre, just above the tab bar), fades and blurs
+                                val e = fold.value
+                                val buttonY = size.height - navBottom.toPx() - 135.dp.toPx()
+                                transformOrigin = TransformOrigin(0.5f, (buttonY / size.height).coerceIn(0f, 1f))
+                                val k = 1f - 0.97f * e
+                                scaleX = k
+                                scaleY = k
+                                alpha = 1f - seg(e, 0.55f, 1f)
+                                renderEffect = blurEffect(16.dp.toPx() * e)
+                            }
+                    ) { page ->
+                        // page 0 uses the tab's cascade the first time; every later entrance starts a new one
+                        val pageCascade = remember {
+                            if (page == 0 && !firstCascadeUsed[0]) {
+                                firstCascadeUsed[0] = true
+                                cascade
+                            } else {
+                                Cascade(40)
+                            }
                         }
-                ) {
-                    StepPage(index = page, step = STEPS[page], dark = dark, cascade = pageCascade)
+                        Box(
+                            Modifier
+                                .fillMaxSize()
+                                .graphicsLayer {
+                                    // the page sinks while it leaves (same idea as the old page in TabReveal)
+                                    val off = abs((pagerState.currentPage - page) + pagerState.currentPageOffsetFraction)
+                                        .coerceIn(0f, 1f)
+                                    val k = 1f - 0.08f * off
+                                    scaleX = k
+                                    scaleY = k
+                                    alpha = 1f - 0.55f * off
+                                    renderEffect = blurEffect(10.dp.toPx() * off)
+                                }
+                        ) {
+                            StepPage(index = page, step = STEPS[page], dark = dark, cascade = pageCascade)
+                        }
+                    }
                 }
             }
 
             // ---- dots + buttons: float over the bottom of the pages
-            Column(
-                Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp)
-            ) {
+            val controlsModifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+            val controls: @Composable (Modifier) -> Unit = { m ->
+                Controls(
+                    modifier = m,
+                    fold = { fold.value },
+                    current = current,
+                    last = last,
+                    collapsed = collapsed,
+                    dark = dark,
+                    onBack = {
+                        if (current > 0 && !collapsed) scope.launch {
+                            pagerState.animateScrollToPage(
+                                current - 1,
+                                animationSpec = spring(dampingRatio = 0.85f, stiffness = 220f)
+                            )
+                        }
+                    },
+                    onPrimary = {
+                        if (!fold.isRunning) {
+                            when {
+                                collapsed -> reopen()
+                                current == last -> collapse()
+                                else -> scope.launch {
+                                    pagerState.animateScrollToPage(
+                                        current + 1,
+                                        animationSpec = spring(dampingRatio = 0.85f, stiffness = 220f)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                )
+            }
+            if (initiallyFolded) {
+                // the tab opened with the guide already folded: the small button comes in with the tab's cascade
+                Reveal(delayMs = remember { cascade.take() }, modifier = controlsModifier, dy = 12.dp) {
+                    controls(Modifier.fillMaxWidth())
+                }
+            } else {
+                controls(controlsModifier)
+            }
+        }
+    }
+}
+
+/**
+ * Dots + Back + Next/Done. [fold] (0..1) morphs the big pill into the small "read the rules again" pill:
+ * the dots and Back fade away, the pill shrinks to the size of its new text and gulps once when the guide arrives.
+ */
+@Composable
+private fun Controls(
+    modifier: Modifier,
+    fold: () -> Float,
+    current: Int,
+    last: Int,
+    collapsed: Boolean,
+    dark: Boolean,
+    onBack: () -> Unit,
+    onPrimary: () -> Unit
+) {
+    val e = fold()                     // read here, so only this small part recomposes while it animates
+    val density = LocalDensity.current
+    val measurer = rememberTextMeasurer()
+    val reopenText = stringResource(R.string.create_reopen)
+    val reopenStyle = remember { TextStyle(color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold) }
+    // width of the small pill = icon + gap + text + the same side padding as the big one
+    val smallW = remember(reopenText) {
+        with(density) { measurer.measure(reopenText, reopenStyle).size.width.toDp() } + 20.dp + 8.dp + 36.dp
+    }
+    val backFrac by animateFloatAsState(
+        targetValue = if (current > 0 && !collapsed) 1f else 0f,
+        animationSpec = spring(dampingRatio = 0.8f, stiffness = 300f),
+        label = "backPill"
+    )
+
+    Column(modifier) {
+        Box(Modifier.fillMaxWidth().graphicsLayer { alpha = 1f - seg(e, 0f, 0.35f) }) {
             Dots(current = current, count = STEPS.size, dark = dark)
-            Spacer(Modifier.height(14.dp))
-            val backFrac by animateFloatAsState(
-                targetValue = if (current > 0) 1f else 0f,
-                animationSpec = spring(dampingRatio = 0.8f, stiffness = 300f),
-                label = "backPill"
-            )
+        }
+        Spacer(Modifier.height(14.dp))
+        BoxWithConstraints(
+            Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(bottom = 108.dp)
+        ) {
+            val backW = 112.dp * backFrac
+            val gap = 10.dp * backFrac
+            val pillW = lerp(maxWidth - backW - gap, smallW, e)
+            val pillH = lerp(54.dp, 46.dp, e)
             Row(
-                Modifier
-                    .fillMaxWidth()
-                    .navigationBarsPadding()
-                    .padding(bottom = 108.dp),
+                Modifier.fillMaxWidth().height(54.dp),
+                horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(
                     Modifier
-                        .width(112.dp * backFrac)
+                        .width(backW)
                         .height(54.dp)
                         .clipToBounds()
                         .graphicsLayer { alpha = backFrac }
@@ -218,30 +361,46 @@ fun CreatePage(dark: Boolean, cascade: Cascade, modifier: Modifier = Modifier) {
                         GhostPill(
                             text = stringResource(R.string.create_back),
                             dark = dark,
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                            if (current > 0) scope.launch {
-                                pagerState.animateScrollToPage(
-                                    current - 1,
-                                    animationSpec = spring(dampingRatio = 0.85f, stiffness = 220f)
-                                )
-                            }
-                        }
-                    }
-                }
-                Spacer(Modifier.width(10.dp * backFrac))
-                OrangePill(
-                    text = stringResource(if (current == last) R.string.done else R.string.create_next),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    scope.launch {
-                        pagerState.animateScrollToPage(
-                            if (current == last) 0 else current + 1,
-                            animationSpec = spring(dampingRatio = 0.85f, stiffness = 220f)
+                            modifier = Modifier.fillMaxSize(),
+                            onClick = onBack
                         )
                     }
                 }
-            }
+                Spacer(Modifier.width(gap))
+                Box(
+                    Modifier
+                        .width(pillW)
+                        .height(pillH)
+                        .graphicsLayer {
+                            // a small "gulp" when the guide reaches the button
+                            val g = 1f + 0.07f * sin(PI.toFloat() * seg(e, 0.75f, 1f))
+                            scaleX = g
+                            scaleY = g
+                        }
+                        .bounceClick(onClick = onPrimary)
+                        .clip(CircleShape)
+                        .background(Brush.verticalGradient(listOf(Color(0xFFDB7608), Color(0xFFC25E00))))
+                        .border(1.dp, Color(0xFFF0A95A).copy(alpha = 0.55f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    // Next / Done fades out while the pill shrinks ...
+                    BasicText(
+                        stringResource(if (current == last) R.string.done else R.string.create_next),
+                        maxLines = 1,
+                        softWrap = false,
+                        modifier = Modifier.graphicsLayer { alpha = 1f - seg(e, 0f, 0.45f) },
+                        style = TextStyle(color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    )
+                    // ... and "read the rules again" fades in
+                    Row(
+                        Modifier.graphicsLayer { alpha = seg(e, 0.55f, 1f) },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        GlyphIcon(R.drawable.ic_refresh, Color.White, 20.dp)
+                        Spacer(Modifier.width(8.dp))
+                        BasicText(reopenText, maxLines = 1, softWrap = false, style = reopenStyle)
+                    }
+                }
             }
         }
     }

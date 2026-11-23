@@ -58,6 +58,8 @@ fun MainScreen(dark: Boolean, introDelayMs: Int = 200) {
     val backdrop = rememberLayerBackdrop()
     val scope = rememberCoroutineScope()
     var tab by rememberSaveable { mutableIntStateOf(0) }
+    // the Create guide was read and folded into its small button (stays folded when you come back to the tab)
+    var rulesFolded by rememberSaveable { mutableStateOf(false) }
     // Center of each tab button: the wave starts from the tab you tapped.
     val centers = remember { mutableMapOf<Int, Offset>() }
     val contentColor = if (dark) Color.White else Color.Black
@@ -102,7 +104,9 @@ fun MainScreen(dark: Boolean, introDelayMs: Int = 200) {
                         index, revealBase, dark, profile,
                         onEdit = { from -> push.open("edit", from) },
                         onSettings = { from -> push.open("settings", from, circular = true) },
-                        onViewImage = { viewImage = it }
+                        onViewImage = { viewImage = it },
+                        rulesFolded = rulesFolded,
+                        onRulesFolded = { rulesFolded = it }
                     )
                 }
             }
@@ -158,7 +162,9 @@ private fun TabPage(
     profile: ProfileState,
     onEdit: (Rect) -> Unit,
     onSettings: (Rect) -> Unit,
-    onViewImage: (ViewedImage) -> Unit
+    onViewImage: (ViewedImage) -> Unit,
+    rulesFolded: Boolean,
+    onRulesFolded: (Boolean) -> Unit
 ) {
     val textColor = if (dark) Color.White else Color(0xFF101114)
     val cascade = remember { Cascade(revealBase) }
@@ -192,7 +198,13 @@ private fun TabPage(
             // Create = the swipeable pages that explain how to create a channel (continues the tab's cascade).
             if (index == 1) {
                 Spacer(Modifier.height(14.dp))
-                CreatePage(dark = dark, cascade = cascade, modifier = Modifier.weight(1f))
+                CreatePage(
+                    dark = dark,
+                    cascade = cascade,
+                    modifier = Modifier.weight(1f),
+                    startCollapsed = rulesFolded,
+                    onCollapsedChange = onRulesFolded
+                )
             }
             // Home stays empty for now.
         }

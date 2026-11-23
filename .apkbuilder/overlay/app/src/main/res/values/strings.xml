@@ -58,6 +58,7 @@
     <string name="create_badge_optional">اختياري</string>
     <string name="create_back">رجوع</string>
     <string name="create_next">التالي</string>
+    <string name="create_reopen">قراءة القواعد مرة أخرى</string>
 
     <string name="create_chip_photo">الصورة</string>
     <string name="create_chip_name">الاسم</string>
