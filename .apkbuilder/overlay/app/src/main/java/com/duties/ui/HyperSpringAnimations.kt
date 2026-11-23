@@ -122,6 +122,9 @@ val POWER4_OUT = CubicBezierEasing(0.165f, 0.84f, 0.44f, 1f)
 /** TabReveal.WAVE */
 val WAVE = CubicBezierEasing(0.4f, 0.1f, 0.15f, 1f)
 
+/** Circular reveal of a page out of a button: soft start (the small circle is seen), long smooth end. */
+val CIRCLE_GROW = CubicBezierEasing(0.3f, 0f, 0.1f, 1f)
+
 fun seg(t: Float, a: Float, b: Float): Float = ((t - a) / (b - a)).coerceIn(0f, 1f)
 
 fun lerpF(a: Float, b: Float, t: Float): Float = a + (b - a) * t
@@ -467,7 +470,7 @@ fun TabRevealHost(
 /** Card color (the row that grows). */
 private val SURFACE = Color(0xFF22222B)
 
-class PushRequest(val title: String, val from: Rect?)
+class PushRequest(val title: String, val from: Rect?, val circular: Boolean = false)
 
 class PushController(private val scope: CoroutineScope) {
     var request by mutableStateOf<PushRequest?>(null)
@@ -483,9 +486,13 @@ class PushController(private val scope: CoroutineScope) {
     val pop = Animatable(0f)
     private var closing = false
 
-    fun open(title: String, from: Rect?) {
+    /**
+     * [circular] = true: the page is born as a small circle on the tapped button and grows (circular
+     * reveal) until it covers the screen; going back shrinks it into the button again.
+     */
+    fun open(title: String, from: Rect?, circular: Boolean = false) {
         if (request != null) return
-        request = PushRequest(title, from)
+        request = PushRequest(title, from, circular && from != null)
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
             pop.snapTo(0f)
             under.snapTo(0f)
@@ -493,10 +500,14 @@ class PushController(private val scope: CoroutineScope) {
         }
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
             bloom.snapTo(0f)
-            bloom.animateTo(
-                1f,
-                tween(if (from != null) 640 else 700, easing = if (from != null) EXPO_OUT else SETTLE)
-            )
+            if (circular && from != null) {
+                bloom.animateTo(1f, tween(620, easing = CIRCLE_GROW))
+            } else {
+                bloom.animateTo(
+                    1f,
+                    tween(if (from != null) 640 else 700, easing = if (from != null) EXPO_OUT else SETTLE)
+                )
+            }
         }
     }
 
@@ -506,9 +517,11 @@ class PushController(private val scope: CoroutineScope) {
         closing = true
         scope.launch {
             launch { bloom.snapTo(1f) }                   // an unfinished opening is completed
+            val circ = request?.circular == true
+            val ms = if (circ) 420 else 320
             coroutineScope {
-                launch { under.animateTo(0f, tween(320, easing = SETTLE)) }
-                launch { pop.animateTo(1f, tween(320, easing = SETTLE)) }
+                launch { under.animateTo(0f, tween(ms, easing = SETTLE)) }
+                launch { pop.animateTo(1f, tween(ms, easing = if (circ) CIRCLE_GROW else SETTLE)) }
             }
             request = null
             pop.snapTo(0f)
@@ -579,9 +592,27 @@ private fun DetailLayer(
             .graphicsLayer {
                 val bt = c.bloom.value
                 val src = r.from
-                val grow = growFromSource && src != null && c.pop.value == 0f && bt < 1f
-                alpha = if (grow || c.pop.value > 0f) 1f else minOf(1f, c.under.value * 1.4f)
-                translationX = c.pop.value * size.width
+                val pv = c.pop.value
+                if (r.circular && src != null) {
+                    // Circular reveal: a circle that starts as the button and grows to cover the screen
+                    // (and shrinks back into the button when closing). The page never slides sideways.
+                    val cx = src.center.x
+                    val cy = src.center.y
+                    val w = size.width.toFloat()
+                    val h = size.height.toFloat()
+                    val startR = minOf(src.width, src.height) / 2f
+                    val maxR = hypot(max(cx, w - cx), max(cy, h - cy)) + 2.dp.toPx()
+                    val k = if (pv > 0f) 1f - pv else bt
+                    alpha = 1f - seg(pv, 0.85f, 1f)       // melts into the button at the very end
+                    if (k < 1f) {
+                        clip = true
+                        shape = CircleAt(Offset(cx, cy), lerpF(startR, maxR, k))
+                    }
+                    return@graphicsLayer
+                }
+                val grow = growFromSource && src != null && pv == 0f && bt < 1f
+                alpha = if (grow || pv > 0f) 1f else minOf(1f, c.under.value * 1.4f)
+                translationX = pv * size.width
                 if (grow && src != null) {
                     // the page is only visible inside a rectangle that grows from the button to the screen
                     val l = lerpF(src.left, 0f, bt)
@@ -605,7 +636,7 @@ private fun DetailLayer(
             val dp = density
             val from = r.from
             if (from != null) {
-                if (growFromSource) return@Canvas              // the page itself is growing
+                if (growFromSource || r.circular) return@Canvas   // the page itself is growing
                 val a = 1f - seg(t, 0.3f, 0.85f)
                 if (a <= 0f) return@Canvas
                 val left = lerpF(from.left, 0f, t)

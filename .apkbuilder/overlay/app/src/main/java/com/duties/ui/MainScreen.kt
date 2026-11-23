@@ -99,7 +99,7 @@ fun MainScreen(dark: Boolean, introDelayMs: Int = 200) {
                     TabPage(
                         index, revealBase, dark, profile,
                         onEdit = { from -> push.open("edit", from) },
-                        onSettings = { from -> push.open("settings", from) },
+                        onSettings = { from -> push.open("settings", from, circular = true) },
                         onViewImage = { viewImage = it }
                     )
                 }
