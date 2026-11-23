@@ -1,6 +1,5 @@
 package com.duties.ui
 
-import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -60,7 +59,7 @@ fun MainScreen(dark: Boolean) {
     // its parts come out of that point. edgeLine = false -> no thin light line around the growing page.
     val push = remember { PushController(scope) }
     // banner / profile photo shown full screen (null = closed); it sits above the tab bar
-    var viewImage by remember { mutableStateOf<Bitmap?>(null) }
+    var viewImage by remember { mutableStateOf<ViewedImage?>(null) }
 
     PushStack(
         controller = push,
@@ -133,7 +132,7 @@ private fun TabPage(
     dark: Boolean,
     profile: ProfileState,
     onEdit: (Rect) -> Unit,
-    onViewImage: (Bitmap) -> Unit
+    onViewImage: (ViewedImage) -> Unit
 ) {
     val textColor = if (dark) Color.White else Color(0xFF101114)
     val cascade = remember { Cascade(revealBase) }

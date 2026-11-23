@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "738527242095",
+    "firebase_url": "https://duties-a11bf-default-rtdb.firebaseio.com",
+    "project_id": "duties-a11bf",
+    "storage_bucket": "duties-a11bf.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:738527242095:android:90fd31906200198528aa9a",
+        "android_client_info": {
+          "package_name": "com.duties"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "738527242095-garjkafgmpq3jevoo3mstjclaou6hanv.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.duties",
+            "certificate_hash": "b6d42c9ae6ac27ffd8df2000920dc0a0abb32eb6"
+          }
+        },
+        {
+          "client_id": "738527242095-lq297dmumdv0oldg74vknm3m30u3pdi7.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBWkl1uG_ExO_b0ySd1Izf38XJY0dk-lvI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "738527242095-lq297dmumdv0oldg74vknm3m30u3pdi7.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
