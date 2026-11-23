@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -82,6 +83,12 @@ fun MainScreen(dark: Boolean, introDelayMs: Int = 200) {
     // Profile (name, @username, bio, photos) and the edit page that opens from the pencil button.
     val user = remember { FirebaseAuth.getInstance().currentUser }
     val profile = rememberProfileState(user?.uid ?: "local", user?.displayName, user?.email)
+    // channels of this account (Firestore): created in the Create tab, shown as a chat list in Home
+    val channels = remember { ChannelsState(user?.uid ?: "local") }
+    DisposableEffect(channels) {
+        if (user != null) channels.start()
+        onDispose { channels.stop() }
+    }
     // HyperSpring PushMorph: the page below dissolves, the pencil button grows into the edit page and
     // its parts come out of that point. edgeLine = false -> no thin light line around the growing page.
     val push = remember { PushController(scope) }
@@ -111,6 +118,7 @@ fun MainScreen(dark: Boolean, introDelayMs: Int = 200) {
                         onEdit = { from -> push.open("edit", from) },
                         onSettings = { from -> push.open("settings", from, circular = true) },
                         onViewImage = { viewImage = it },
+                        channels = channels,
                         rulesFolded = rulesFolded,
                         onRulesFolded = {
                             rulesFolded = it
@@ -173,6 +181,7 @@ private fun TabPage(
     onEdit: (Rect) -> Unit,
     onSettings: (Rect) -> Unit,
     onViewImage: (ViewedImage) -> Unit,
+    channels: ChannelsState,
     rulesFolded: Boolean,
     onRulesFolded: (Boolean) -> Unit
 ) {
@@ -218,10 +227,20 @@ private fun TabPage(
                     backdrop = glassBackdrop,
                     modifier = Modifier.weight(1f),
                     startCollapsed = rulesFolded,
-                    onCollapsedChange = onRulesFolded
+                    onCollapsedChange = onRulesFolded,
+                    onSubmitChannel = { name, username, bio, photo -> channels.create(name, username, bio, photo) }
                 )
             }
-            // Home stays empty for now.
+            // Home = the channels as a chat list
+            if (index == 0) {
+                Spacer(Modifier.height(10.dp))
+                HomePage(
+                    dark = dark,
+                    channels = channels.channels,
+                    cascade = cascade,
+                    modifier = Modifier.weight(1f)
+                )
+            }
         }
     }
 }

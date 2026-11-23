@@ -73,6 +73,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -93,6 +94,7 @@ import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.PI
 import kotlin.math.roundToInt
@@ -127,6 +129,13 @@ internal class ChannelDraft {
     var username by mutableStateOf("")
     var bio by mutableStateOf("")
     var photo by mutableStateOf<Bitmap?>(null)
+
+    fun clear() {
+        name = ""
+        username = ""
+        bio = ""
+        photo = null
+    }
 }
 
 /**
@@ -154,7 +163,8 @@ internal fun CreateChannelWindow(
     dark: Boolean,
     backdrop: Backdrop,
     draft: ChannelDraft,
-    onClose: () -> Unit
+    onClose: () -> Unit,
+    onSubmit: suspend (name: String, username: String, bio: String, photo: Bitmap?) -> Unit
 ) {
     val show by remember { derivedStateOf { p() > 0.0005f } }
     val contentOn by remember { derivedStateOf { p() > 0.45f } }
@@ -216,9 +226,11 @@ internal fun CreateChannelWindow(
                     backdrop = backdrop,
                     shape = { BlobShape },
                     effects = {
+                        // the same liquid glass as the dialogs of the app (stronger lens once it is the big window)
+                        val big = seg(p(), 0.5f, 0.9f)
                         vibrancy()
-                        blur(10f.dp.toPx())
-                        lens(12f.dp.toPx(), 24f.dp.toPx())
+                        blur(lerpF(10f, 14f, big).dp.toPx())
+                        lens(lerpF(12f, 16f, big).dp.toPx(), lerpF(24f, 32f, big).dp.toPx())
                     },
                     layerBlock = {
                         // while it travels the drop is stretched tall (liquid), then it settles round
@@ -232,7 +244,7 @@ internal fun CreateChannelWindow(
                         val v = p()
                         val orange = 1f - seg(v, 0.25f, 0.8f)          // orange like the button, then dark / light glass
                         drawRect(
-                            color = if (dark) Color.Black.copy(alpha = 0.34f) else Color.White.copy(alpha = 0.55f),
+                            color = if (dark) Color(0xFF121212).copy(alpha = 0.45f) else Color(0xFFFAFAFA).copy(alpha = 0.45f),
                             alpha = seg(v, 0.2f, 0.8f)
                         )
                         if (orange > 0.001f) {
@@ -277,7 +289,8 @@ internal fun CreateChannelWindow(
                         dark = dark,
                         draft = draft,
                         bottomGap = windowBottomGap,
-                        onClose = onClose
+                        onClose = onClose,
+                        onSubmit = onSubmit
                     )
                 }
             }
@@ -289,7 +302,13 @@ internal fun CreateChannelWindow(
 // Inside of the window
 // =====================================================================
 @Composable
-private fun ChannelWindowContent(dark: Boolean, draft: ChannelDraft, bottomGap: Dp, onClose: () -> Unit) {
+private fun ChannelWindowContent(
+    dark: Boolean,
+    draft: ChannelDraft,
+    bottomGap: Dp,
+    onClose: () -> Unit,
+    onSubmit: suspend (name: String, username: String, bio: String, photo: Bitmap?) -> Unit
+) {
     val fg = if (dark) Color.White else Color(0xFF101114)
     val inner = rememberLayerBackdrop()          // what the glass fields inside the window refract
     val context = LocalContext.current
@@ -302,6 +321,38 @@ private fun ChannelWindowContent(dark: Boolean, draft: ChannelDraft, bottomGap: 
                 val bmp = decodePickedImage(context, uri)
                 if (bmp != null) draft.photo = squareCrop(bmp)
                 else Toast.makeText(context, loadError, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    // ---- create the channel for real
+    val focus = LocalFocusManager.current
+    var showErrors by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var created by remember { mutableStateOf(false) }
+    var taken by remember { mutableStateOf(false) }
+    val saveError = stringResource(R.string.error_save)
+    val nameOk = isValidName(draft.name)
+    val userOk = isValidUsername(draft.username)
+    val photoOk = draft.photo != null
+
+    fun submit() {
+        showErrors = true
+        if (busy || created || !nameOk || !userOk || !photoOk) return
+        busy = true
+        focus.clearFocus()
+        scope.launch {
+            try {
+                onSubmit(draft.name.trim(), draft.username, draft.bio.trim(), draft.photo)
+                created = true
+                delay(650)
+                onClose()
+            } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                busy = false
+                if (e.isUsernameTaken()) taken = true
+                else Toast.makeText(context, saveError, Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -321,7 +372,7 @@ private fun ChannelWindowContent(dark: Boolean, draft: ChannelDraft, bottomGap: 
                 .drawBehind {
                     fun blob(c: Color, cx: Float, cy: Float, r: Float) = drawCircle(
                         brush = Brush.radialGradient(
-                            listOf(c.copy(alpha = if (dark) 0.40f else 0.30f), Color.Transparent),
+                            listOf(c.copy(alpha = if (dark) 0.22f else 0.16f), Color.Transparent),
                             center = Offset(size.width * cx, size.height * cy),
                             radius = size.minDimension * r
                         ),
@@ -374,8 +425,19 @@ private fun ChannelWindowContent(dark: Boolean, draft: ChannelDraft, bottomGap: 
                 Spacer(Modifier.height(8.dp))
                 BasicText(
                     stringResource(if (draft.photo == null) R.string.create_win_photo_add else R.string.create_win_photo_change),
-                    style = TextStyle(color = fg.copy(alpha = 0.65f), fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    style = TextStyle(
+                        color = if (showErrors && !photoOk) Color(0xFFFF5A5F) else fg.copy(alpha = 0.65f),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium
+                    )
                 )
+                if (showErrors && !photoOk) {
+                    Spacer(Modifier.height(2.dp))
+                    BasicText(
+                        stringResource(R.string.create_win_error_photo),
+                        style = TextStyle(color = Color(0xFFFF5A5F), fontSize = 12.sp)
+                    )
+                }
             }
 
             Spacer(Modifier.height(18.dp))
@@ -390,6 +452,7 @@ private fun ChannelWindowContent(dark: Boolean, draft: ChannelDraft, bottomGap: 
                 backdrop = inner,
                 dark = dark,
                 onValueChange = { draft.name = it.replace("\n", "").take(NAME_MAX) },
+                error = if (showErrors && !nameOk) stringResource(R.string.error_name_empty) else null,
                 keyboardType = KeyboardType.Text
             )
             Spacer(Modifier.height(12.dp))
@@ -402,7 +465,15 @@ private fun ChannelWindowContent(dark: Boolean, draft: ChannelDraft, bottomGap: 
                 maxLen = USERNAME_MAX,
                 backdrop = inner,
                 dark = dark,
-                onValueChange = { v -> draft.username = v.filter { it.isUsernameChar() }.take(USERNAME_MAX) },
+                onValueChange = { v ->
+                    draft.username = v.filter { it.isUsernameChar() }.take(USERNAME_MAX)
+                    taken = false
+                },
+                error = when {
+                    taken -> stringResource(R.string.error_username_taken)
+                    showErrors && !userOk -> stringResource(R.string.error_username_short)
+                    else -> null
+                },
                 countBad = draft.username.isNotEmpty() && draft.username.length < USERNAME_MIN,
                 keyboardType = KeyboardType.Ascii
             )
@@ -425,6 +496,28 @@ private fun ChannelWindowContent(dark: Boolean, draft: ChannelDraft, bottomGap: 
             Spacer(Modifier.height(12.dp))
             // ---- members (optional)
             MembersCard(bd = inner, dark = dark, fg = fg)
+
+            Spacer(Modifier.height(20.dp))
+            // ---- create
+            LiquidButton(
+                onClick = ::submit,
+                backdrop = inner,
+                tint = WIN_ORANGE,
+                modifier = Modifier.fillMaxWidth().height(54.dp)
+            ) {
+                BasicText(
+                    stringResource(
+                        when {
+                            created -> R.string.create_win_done
+                            busy -> R.string.create_win_creating
+                            else -> R.string.create_win_submit
+                        }
+                    ),
+                    maxLines = 1,
+                    softWrap = false,
+                    style = TextStyle(color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                )
+            }
         }
     }
 }
