@@ -38,6 +38,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -107,6 +108,8 @@ internal fun UserProfileMorph(
     val p = remember { Animatable(0f) }
     var shown by remember { mutableStateOf<ProfileTarget?>(null) }
     val density = LocalDensity.current
+    // the photo / banner of this person shown full screen (null = closed)
+    var viewImage by remember { mutableStateOf<ViewedImage?>(null) }
 
     BackHandler(enabled = open && target != null) { onClose() }
 
@@ -116,6 +119,7 @@ internal fun UserProfileMorph(
             p.snapTo(0f)
             p.animateTo(1f, tween(OPEN_MS, easing = OPEN_EASE))
         } else if (shown != null) {
+            viewImage = null
             p.animateTo(0f, tween(CLOSE_MS, easing = CLOSE_EASE))
             shown = null
             onDismissed()
@@ -150,7 +154,8 @@ internal fun UserProfileMorph(
                     target = t,
                     dark = dark,
                     reveal = { seg(p.value, 0.35f, 0.85f) },
-                    onBack = onClose
+                    onBack = onClose,
+                    onViewImage = { viewImage = it }
                 )
 
                 // the photo itself, scaled up from its place until it fills the circle; it fades into the page
@@ -185,6 +190,9 @@ internal fun UserProfileMorph(
                     style = Stroke(0.9.dp.toPx())
                 )
             }
+
+            // the photo / banner full screen (zoom + save), above the whole profile page
+            ImageViewerHost(viewImage) { viewImage = null }
         }
     }
 }
@@ -194,7 +202,8 @@ private fun ProfileContent(
     target: ProfileTarget,
     dark: Boolean,
     reveal: () -> Float,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onViewImage: (ViewedImage) -> Unit
 ) {
     // name / username / bio / photo / banner come from UserProfiles: already in memory (loaded when the chat showed,
     // or saved on the phone), so they are in the very first frame. The server's newer data replaces them silently.
@@ -212,6 +221,9 @@ private fun ProfileContent(
         UserProfiles.pinned = target.uid
         onDispose { if (UserProfiles.pinned == target.uid) UserProfiles.pinned = null }
     }
+
+    val photoNow by rememberUpdatedState(info.photo)
+    val bannerNow by rememberUpdatedState(banner)
 
     val backdrop = rememberLayerBackdrop()
     val textColor = if (dark) Color.White else Color(0xFF101114)
@@ -285,6 +297,20 @@ private fun ProfileContent(
                     .navigationBarsPadding()
                     .padding(bottom = 40.dp)
             ) {
+                // tap or long press on the banner = open it full screen (only if there is one)
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(u * 620f)
+                        .align(Alignment.TopStart)
+                        .pointerInput(Unit) {
+                            detectTapGestures(
+                                onTap = { openUserBanner(bannerNow, onViewImage) },
+                                onLongPress = { openUserBanner(bannerNow, onViewImage) }
+                            )
+                        }
+                )
+
                 // ---- back button (right end: the app is right-to-left, like the back button of the chat)
                 Row(
                     Modifier.fillMaxWidth().padding(start = u * 22f, end = u * 20f, top = u * 20f),
@@ -308,6 +334,12 @@ private fun ProfileContent(
                         .align(Alignment.TopStart)
                         .padding(start = u * 47f, top = u * 352f)
                         .clip(CircleShape)
+                        .pointerInput(Unit) {
+                            detectTapGestures(
+                                onTap = { photoNow?.let { onViewImage(ViewedImage(it)) } },
+                                onLongPress = { photoNow?.let { onViewImage(ViewedImage(it)) } }
+                            )
+                        }
                 )
 
                 // ---- name + @username on the right
@@ -358,4 +390,10 @@ private fun ProfileContent(
             }
         }
     }
+}
+
+/** Opens the banner full screen (a GIF banner keeps playing there). */
+private fun openUserBanner(slot: ImageSlot, onViewImage: (ViewedImage) -> Unit) {
+    val bmp = slot.cropped ?: return
+    onViewImage(ViewedImage(bmp, slot.gif, slot.tf))
 }
