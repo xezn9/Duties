@@ -71,7 +71,7 @@ import kotlinx.coroutines.delay
  * rises, sharpens from a blur and settles). Long press on a row: a small menu (see ChannelMenu.kt).
  */
 @Composable
-fun HomePage(
+internal fun HomePage(
     dark: Boolean,
     backdrop: Backdrop,
     channels: List<Channel>,
