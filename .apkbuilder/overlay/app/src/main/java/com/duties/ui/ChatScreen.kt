@@ -117,6 +117,12 @@ internal const val CLOSE_MS = 480
 internal val OPEN_EASE = CubicBezierEasing(0.4f, 0f, 0.2f, 1f)
 internal val CLOSE_EASE = CubicBezierEasing(0.32f, 0.72f, 0f, 1f)
 
+// the chat slides in from the side of the screen (only the chat; the profile page keeps OPEN_MS / CLOSE_MS)
+private const val SLIDE_OPEN_MS = 380
+private const val SLIDE_CLOSE_MS = 320
+private val SLIDE_OPEN_EASE = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
+private val SLIDE_CLOSE_EASE = CubicBezierEasing(0.4f, 0f, 0.6f, 1f)
+
 private val HDR_AVATAR = 40.dp
 internal val BLUR_MAX = 9.dp
 internal val BAR_BUTTON = 48.dp
@@ -174,11 +180,10 @@ internal fun ChatMorph(
             shown = target
             from = target.from
             p.snapTo(0f)
-            p.animateTo(1f, tween(OPEN_MS, easing = OPEN_EASE))
+            p.animateTo(1f, tween(SLIDE_OPEN_MS, easing = SLIDE_OPEN_EASE))
         } else if (shown != null) {
-            // the list may have moved while the chat was open: shrink into the row where it is NOW
-            target?.currentBounds?.invoke()?.let { from = it }
-            p.animateTo(0f, tween(CLOSE_MS, easing = CLOSE_EASE))
+            // slide back out to the side
+            p.animateTo(0f, tween(SLIDE_CLOSE_MS, easing = SLIDE_CLOSE_EASE))
             shown = null
             onDismissed()
         }
@@ -192,21 +197,12 @@ internal fun ChatMorph(
 
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
         Box(Modifier.fillMaxSize()) {
-            // ---- the growing layer: the channel's avatar grows as a circle until it covers the screen,
-            // the chat shows up inside it. A light blur (Android 12+) while it moves.
+            // ---- the whole chat slides in from the right edge of the screen (and back out when it closes)
             Box(
                 Modifier
                     .fillMaxSize()
                     .graphicsLayer {
-                        val k = p.value
-                        val c = avatarStart(from)
-                        val rEnd = coverRadius(c, size.width, size.height)
-                        val r = lerpF(ROW_AVATAR.toPx() / 2f, rEnd, k)
-                        clip = true
-                        shape = RoundedRectClip(Rect(c, r), r)
-                        val blur = BLUR_MAX.toPx() * kotlin.math.sin(Math.PI * k).toFloat()
-                        renderEffect = if (blur > 0.5f && k < 0.995f && android.os.Build.VERSION.SDK_INT >= 31)
-                            BlurEffect(blur, blur, TileMode.Clamp) else null
+                        translationX = (1f - p.value) * size.width
                     }
                     .pointerInput(Unit) { detectTapGestures { } }          // covers what is below
             ) {
@@ -216,7 +212,7 @@ internal fun ChatMorph(
                     uid = uid,
                     senderName = senderName,
                     myPhoto = myPhoto,
-                    reveal = { seg(p.value, 0.35f, 0.85f) },
+                    reveal = { 1f },
                     onBack = close,
                     onAvatarClick = { pt ->
                         if (profile == null) {
@@ -226,47 +222,6 @@ internal fun ChatMorph(
                             profileOpen = true
                         }
                     }
-                )
-
-                // the avatar itself, scaled up from its place until it fills the circle; it fades into the chat
-                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                    Box(Modifier.fillMaxSize()) {
-                        Box(
-                            Modifier
-                                .absoluteOffset {
-                                    val c = avatarStart(from)
-                                    IntOffset((c.x - ROW_AVATAR.toPx() / 2f).roundToInt(), (c.y - ROW_AVATAR.toPx() / 2f).roundToInt())
-                                }
-                                .size(ROW_AVATAR)
-                                .graphicsLayer {
-                                    val c = avatarStart(from)
-                                    val rEnd = coverRadius(c, screenW, screenH)
-                                    val r = lerpF(ROW_AVATAR.toPx() / 2f, rEnd, p.value)
-                                    val sc = r / (ROW_AVATAR.toPx() / 2f)
-                                    scaleX = sc
-                                    scaleY = sc
-                                    alpha = 1f - seg(p.value, 0.3f, 0.8f)
-                                }
-                        ) { Avatar(t.channel.photo, t.channel.name, ROW_AVATAR) }
-                    }
-                }
-            }
-
-            // ---- the thin glass rim of the circle (it fades away when the chat fills the screen)
-            Canvas(Modifier.fillMaxSize()) {
-                val k = p.value
-                val a = seg(k, 0f, 0.12f) * (1f - seg(k, 0.5f, 0.9f))
-                if (a <= 0f) return@Canvas
-                val c = avatarStart(from)
-                val r = lerpF(ROW_AVATAR.toPx() / 2f, coverRadius(c, size.width, size.height), k)
-                drawCircle(
-                    brush = Brush.verticalGradient(
-                        listOf(Color.White.copy(0.55f * a), Color.White.copy(0.08f * a)),
-                        startY = c.y - r, endY = c.y + r
-                    ),
-                    radius = r,
-                    center = c,
-                    style = Stroke(0.9.dp.toPx())
                 )
             }
 
