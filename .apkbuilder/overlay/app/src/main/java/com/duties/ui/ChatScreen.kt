@@ -63,6 +63,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
@@ -318,9 +319,10 @@ private fun ChatContent(
                     if (chat.loaded) baselineDone = true
                 }
             }
+            // a new message: the list stays at the bottom (no scroll animation: the message grows in by itself)
             LaunchedEffect(last?.id) {
                 if (last != null && (listState.firstVisibleItemIndex <= 2 || last.uid == uid)) {
-                    listState.animateScrollToItem(0)
+                    listState.scrollToItem(0)
                 }
             }
             LazyColumn(
@@ -328,6 +330,9 @@ private fun ChatContent(
                 reverseLayout = true,
                 modifier = Modifier
                     .fillMaxSize()
+                    // same insets as the writing bar: the list shrinks together with the keyboard, in the same frame
+                    .imePadding()
+                    .navigationBarsPadding()
                     .graphicsLayer { alpha = reveal() },
                 contentPadding = PaddingValues(
                     start = 12.dp,
@@ -355,8 +360,7 @@ private fun ChatContent(
                         dropPx = dropPx,
                         onHeight = { heights[m.id] = it },
                         fg = fg,
-                        time = timeFormat.format(Date(m.createdAtMs)),
-                        modifier = Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null)
+                        time = timeFormat.format(Date(m.createdAtMs))
                     )
                 }
             }
@@ -442,9 +446,9 @@ private fun ChatContent(
             Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .onSizeChanged { bottomPx = it.height }
                 .imePadding()
                 .navigationBarsPadding()
+                .onSizeChanged { bottomPx = it.height }      // the bar alone, without keyboard / nav bar
                 .padding(horizontal = 12.dp, vertical = 8.dp)
                 .graphicsLayer {
                     val a = seg(reveal(), 0.1f, 0.8f)
@@ -539,7 +543,7 @@ private fun MessageBubble(
     // a new message pops up from the bottom (where the writing bar is) with a soft spring
     val enter = remember { Animatable(if (isNew) 0f else 1f) }
     LaunchedEffect(Unit) {
-        if (isNew) enter.animateTo(1f, spring(dampingRatio = 0.7f, stiffness = 360f))
+        if (isNew) enter.animateTo(1f, tween(320, easing = CubicBezierEasing(0.2f, 0.9f, 0.25f, 1f)))
     }
 
     // the tail corner (small) is on the photo's side and only on the last message of a group
@@ -549,8 +553,17 @@ private fun MessageBubble(
         bottomStart = if (mine) tail else 20.dp,
         bottomEnd = if (mine) 20.dp else tail
     )
+    // the item's height grows from 0 to its real height: the older messages slide up smoothly and the new bubble
+    // comes out from under them (from the writing bar). It is the only motion: nothing else scrolls or moves.
     Box(
-        modifier
+        modifier.layout { measurable, constraints ->
+            val placeable = measurable.measure(constraints)
+            val h = (placeable.height * enter.value.coerceIn(0f, 1f)).roundToInt()
+            layout(placeable.width, h) { placeable.place(0, 0) }
+        }
+    ) {
+    Box(
+        Modifier
             .fillMaxWidth()
             .onSizeChanged { onHeight(it.height) }
             .padding(top = if (topGap) 6.dp else 0.dp),
@@ -566,13 +579,12 @@ private fun MessageBubble(
                 Modifier
                     .widthIn(max = 260.dp)
                     .graphicsLayer {
-                        val e = enter.value
-                        alpha = e.coerceIn(0f, 1f)
-                        translationY = (1f - e) * 56.dp.toPx()
-                        val sc = 0.8f + 0.2f * e
+                        val e = enter.value.coerceIn(0f, 1f)
+                        alpha = e
+                        val sc = 0.88f + 0.12f * e
                         scaleX = sc
                         scaleY = sc
-                        transformOrigin = TransformOrigin(if (mine) 1f else 0f, 1f)
+                        transformOrigin = TransformOrigin(if (mine) 1f else 0f, 0f)
                     }
             ) {
                 if (showName && m.name.isNotBlank()) {
@@ -612,6 +624,7 @@ private fun MessageBubble(
                 MsgAvatarSlot(showAvatar, isNew, dropPx, photo, m.name)
             }
         }
+    }
     }
 }
 
