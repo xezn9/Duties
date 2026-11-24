@@ -5,6 +5,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -50,7 +51,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Shape
@@ -61,6 +65,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -112,18 +117,19 @@ private val OPEN_EASE = CubicBezierEasing(0.25f, 0.85f, 0.25f, 1f)
 private val CLOSE_EASE = CubicBezierEasing(0.32f, 0.72f, 0f, 1f)
 
 private val HDR_AVATAR = 40.dp
+private val BLUR_MAX = 9.dp
 private val BAR_BUTTON = 48.dp
 
-/** The rectangle the chat is clipped to: from the row's bounds ([k] = 0) to the whole screen ([k] = 1). */
-private fun morphRect(from: Rect, k: Float, w: Float, h: Float): Rect = Rect(
-    lerpF(from.left, 0f, k),
-    lerpF(from.top, 0f, k),
-    lerpF(from.right, w, k),
-    lerpF(from.bottom, h, k)
-)
+/** Where the circle starts: on the channel's avatar inside the tapped row (the row is right-to-left: avatar at the right end). */
+private fun Density.avatarStart(from: Rect): Offset =
+    Offset(from.right - ROW_PAD_H.toPx() - ROW_AVATAR.toPx() / 2f, from.center.y)
 
-private fun morphRadius(from: Rect, k: Float, d: Density): Float =
-    lerpF(minOf(from.height / 2f, with(d) { 28.dp.toPx() }), 0f, k)
+/** Radius that covers the whole screen from [c]. */
+private fun coverRadius(c: Offset, w: Float, h: Float): Float {
+    val dx = maxOf(c.x, w - c.x)
+    val dy = maxOf(c.y, h - c.y)
+    return kotlin.math.sqrt(dx * dx + dy * dy) + 2f
+}
 
 private class RoundedRectClip(val r: Rect, val radius: Float) : Shape {
     override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline =
@@ -148,7 +154,6 @@ internal fun ChatMorph(
     val p = remember { Animatable(0f) }
     var shown by remember { mutableStateOf<ChatTarget?>(null) }
     var from by remember { mutableStateOf(Rect.Zero) }
-    var headerAvatar by remember { mutableStateOf<Rect?>(null) }
     val density = LocalDensity.current
 
     val focus = LocalFocusManager.current
@@ -176,110 +181,84 @@ internal fun ChatMorph(
     }
 
     val t = shown ?: return
+    val screenW = with(density) { LocalConfiguration.current.screenWidthDp.dp.toPx() }
+    val screenH = with(density) { LocalConfiguration.current.screenHeightDp.dp.toPx() }
     val textColor = if (dark) Color.White else Color(0xFF101114)
     val subColor = if (dark) Color(0xFFB0B3B8) else Color(0xFF55586A)
 
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
         Box(Modifier.fillMaxSize()) {
-            // ---- the growing layer
+            // ---- the growing layer: the channel's avatar grows as a circle until it covers the screen,
+            // the chat shows up inside it. A light blur (Android 12+) while it moves.
             Box(
                 Modifier
                     .fillMaxSize()
                     .graphicsLayer {
-                        val r = morphRect(from, p.value, size.width, size.height)
+                        val k = p.value
+                        val c = avatarStart(from)
+                        val rEnd = coverRadius(c, size.width, size.height)
+                        val r = lerpF(ROW_AVATAR.toPx() / 2f, rEnd, k)
                         clip = true
-                        shape = RoundedRectClip(r, morphRadius(from, p.value, density))
+                        shape = RoundedRectClip(Rect(c, r), r)
+                        val blur = BLUR_MAX.toPx() * kotlin.math.sin(Math.PI * k).toFloat()
+                        renderEffect = if (blur > 0.5f && k < 0.995f && android.os.Build.VERSION.SDK_INT >= 31)
+                            BlurEffect(blur, blur, TileMode.Clamp) else null
                     }
                     .pointerInput(Unit) { detectTapGestures { } }          // covers what is below
             ) {
-                // same background as Home, so the rectangle is only seen through its glass tint and its rim
-                AppBackground(dark, variant = 0)
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .drawBehind {
-                            val k = p.value
-                            val a = seg(k, 0f, 0.12f) * (1f - seg(k, 0.55f, 1f))
-                            val tint = if (dark) Color.Black.copy(0.26f * a) else Color.White.copy(0.42f * a)
-                            drawRect(tint)
-                        }
-                )
-
-                // the row, drawn again at its place: its text fades out while the rectangle grows
-                // (left-to-right box: absoluteOffset counts from the LEFT edge of the screen)
-                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                    Box(Modifier.fillMaxSize()) {
-                        Box(
-                            Modifier
-                                .absoluteOffset { IntOffset(from.left.roundToInt(), from.top.roundToInt()) }
-                                .size(with(density) { from.width.toDp() }, with(density) { from.height.toDp() })
-                                .graphicsLayer { alpha = 1f - seg(p.value, 0f, 0.3f) }
-                        ) {
-                            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-                                ChannelRowContent(t.channel, textColor, subColor, hideAvatar = true)
-                            }
-                        }
-                    }
-                }
-
                 ChatContent(
                     channel = t.channel,
                     dark = dark,
                     uid = uid,
                     senderName = senderName,
                     myPhoto = myPhoto,
-                    reveal = { seg(p.value, 0.3f, 0.75f) },
-                    onBack = close,
-                    onHeaderAvatar = { headerAvatar = it }
+                    reveal = { seg(p.value, 0.35f, 0.85f) },
+                    onBack = close
                 )
 
-                // the avatar: flies from the row to the top bar (and back)
+                // the avatar itself, scaled up from its place until it fills the circle; it fades into the chat
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                     Box(Modifier.fillMaxSize()) {
                         Box(
                             Modifier
                                 .absoluteOffset {
-                                    val c = avatarCenter(from, headerAvatar, p.value)
+                                    val c = avatarStart(from)
                                     IntOffset((c.x - ROW_AVATAR.toPx() / 2f).roundToInt(), (c.y - ROW_AVATAR.toPx() / 2f).roundToInt())
                                 }
                                 .size(ROW_AVATAR)
                                 .graphicsLayer {
-                                    val s = lerpF(1f, HDR_AVATAR.toPx() / ROW_AVATAR.toPx(), p.value)
-                                    scaleX = s
-                                    scaleY = s
+                                    val c = avatarStart(from)
+                                    val rEnd = coverRadius(c, screenW, screenH)
+                                    val r = lerpF(ROW_AVATAR.toPx() / 2f, rEnd, p.value)
+                                    val sc = r / (ROW_AVATAR.toPx() / 2f)
+                                    scaleX = sc
+                                    scaleY = sc
+                                    alpha = 1f - seg(p.value, 0.3f, 0.8f)
                                 }
                         ) { Avatar(t.channel.photo, t.channel.name, ROW_AVATAR) }
                     }
                 }
             }
 
-            // ---- the thin glass rim of the growing rectangle (it fades away when the chat fills the screen)
+            // ---- the thin glass rim of the circle (it fades away when the chat fills the screen)
             Canvas(Modifier.fillMaxSize()) {
                 val k = p.value
-                val a = seg(k, 0f, 0.12f) * (1f - seg(k, 0.55f, 1f))
+                val a = seg(k, 0f, 0.12f) * (1f - seg(k, 0.5f, 0.9f))
                 if (a <= 0f) return@Canvas
-                val r = morphRect(from, k, size.width, size.height)
-                drawRoundRect(
+                val c = avatarStart(from)
+                val r = lerpF(ROW_AVATAR.toPx() / 2f, coverRadius(c, size.width, size.height), k)
+                drawCircle(
                     brush = Brush.verticalGradient(
                         listOf(Color.White.copy(0.55f * a), Color.White.copy(0.08f * a)),
-                        startY = r.top, endY = r.bottom
+                        startY = c.y - r, endY = c.y + r
                     ),
-                    topLeft = Offset(r.left, r.top),
-                    size = Size(r.width, r.height),
-                    cornerRadius = CornerRadius(morphRadius(from, k, this)),
+                    radius = r,
+                    center = c,
                     style = Stroke(0.9.dp.toPx())
                 )
             }
         }
     }
-}
-
-/** Center of the flying avatar: on the row's avatar at [k] = 0, on the top bar's avatar at [k] = 1. */
-private fun Density.avatarCenter(from: Rect, header: Rect?, k: Float): Offset {
-    // the row is right-to-left: its avatar is at the right end
-    val start = Offset(from.right - ROW_PAD_H.toPx() - ROW_AVATAR.toPx() / 2f, from.center.y)
-    val end = header?.center ?: start
-    return Offset(lerpF(start.x, end.x, k), lerpF(start.y, end.y, k))
 }
 
 // =====================================================================
@@ -294,8 +273,7 @@ private fun ChatContent(
     senderName: String,
     myPhoto: Bitmap?,
     reveal: () -> Float,
-    onBack: () -> Unit,
-    onHeaderAvatar: (Rect) -> Unit
+    onBack: () -> Unit
 ) {
     val fg = if (dark) Color.White else Color(0xFF101114)
     val sub = if (dark) Color(0xFFB0B3B8) else Color(0xFF55586A)
@@ -325,13 +303,21 @@ private fun ChatContent(
                 .fillMaxSize()
                 .layerBackdrop(chatBd)
         ) {
-            AppBackground(dark, variant = 0)
-            // calm one-colour background: it fades in over the colourful one while the chat opens
-            ChatBackground(dark, Modifier.fillMaxSize().graphicsLayer { alpha = reveal() })
+            ChatBackground(dark, Modifier.fillMaxSize())
             val listState = rememberLazyListState()
             val msgs = chat.messages
             val reversed = remember(msgs) { msgs.asReversed() }
             val last = msgs.lastOrNull()
+            // messages that were there when the chat opened do not animate; the ones that arrive later do
+            val known = remember { HashSet<String>() }
+            val heights = remember { HashMap<String, Int>() }
+            var baselineDone by remember { mutableStateOf(false) }
+            LaunchedEffect(chat.loaded, msgs) {
+                if (!baselineDone) {
+                    known.addAll(msgs.map { it.id })
+                    if (chat.loaded) baselineDone = true
+                }
+            }
             LaunchedEffect(last?.id) {
                 if (last != null && (listState.firstVisibleItemIndex <= 2 || last.uid == uid)) {
                     listState.animateScrollToItem(0)
@@ -354,6 +340,10 @@ private fun ChatContent(
                 itemsIndexed(reversed, key = { _, m -> m.id }) { i, m ->
                     val olderSame = i + 1 < reversed.size && reversed[i + 1].uid == m.uid
                     val newerSame = i > 0 && reversed[i - 1].uid == m.uid
+                    val isNew = remember(m.id) { baselineDone && m.id !in known }
+                    LaunchedEffect(m.id) { known.add(m.id) }
+                    // how far the photo has to fall: from the previous message of the same person down to this one
+                    val dropPx = if (olderSame) (heights[reversed[i + 1].id] ?: 0) + with(density) { 3.dp.toPx() } else 0f
                     MessageBubble(
                         m = m,
                         mine = m.uid == uid,
@@ -361,9 +351,12 @@ private fun ChatContent(
                         topGap = !olderSame,
                         showAvatar = !newerSame,
                         myPhoto = myPhoto,
-                        dark = dark,
+                        isNew = isNew,
+                        dropPx = dropPx,
+                        onHeight = { heights[m.id] = it },
                         fg = fg,
-                        time = timeFormat.format(Date(m.createdAtMs))
+                        time = timeFormat.format(Date(m.createdAtMs)),
+                        modifier = Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null)
                     )
                 }
             }
@@ -411,12 +404,7 @@ private fun ChatContent(
                     Modifier.fillMaxSize().padding(horizontal = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // the flying avatar lands exactly on this empty spot
-                    Box(
-                        Modifier
-                            .size(HDR_AVATAR)
-                            .onGloballyPositioned { onHeaderAvatar(it.boundsInRoot()) }
-                    )
+                    Avatar(channel.photo, channel.name, HDR_AVATAR)
                     Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
                         BasicText(
@@ -528,7 +516,7 @@ private val NAME_COLORS = listOf(
     Color(0xFFFF9F0A), Color(0xFF64D2FF), Color(0xFFBF5AF2), Color(0xFF30D158), Color(0xFFFF375F)
 )
 
-/** One message: mine on the right (orange), the others on the left (glassy), with the sender's name above a group. */
+/** One message: a round white bubble with black text (like Telegram), the sender's photo beside the last message of a group. */
 @Composable
 private fun MessageBubble(
     m: ChatMessage,
@@ -537,71 +525,121 @@ private fun MessageBubble(
     topGap: Boolean,
     showAvatar: Boolean,
     myPhoto: Bitmap?,
-    dark: Boolean,
+    isNew: Boolean,
+    dropPx: Float,
+    onHeight: (Int) -> Unit,
     fg: Color,
-    time: String
+    time: String,
+    modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     LaunchedEffect(m.uid) { UserPhotos.request(context, m.uid) }
     val photo = (if (mine) myPhoto else null) ?: UserPhotos.photos[m.uid]
+
+    // a new message pops up from the bottom (where the writing bar is) with a soft spring
+    val enter = remember { Animatable(if (isNew) 0f else 1f) }
+    LaunchedEffect(Unit) {
+        if (isNew) enter.animateTo(1f, spring(dampingRatio = 0.7f, stiffness = 360f))
+    }
+
+    // the tail corner (small) is on the photo's side and only on the last message of a group
+    val tail = if (showAvatar) 6.dp else 20.dp
     val shape = RoundedCornerShape(
         topStart = 20.dp, topEnd = 20.dp,
-        bottomStart = if (mine) 6.dp else 20.dp,
-        bottomEnd = if (mine) 20.dp else 6.dp
+        bottomStart = if (mine) tail else 20.dp,
+        bottomEnd = if (mine) 20.dp else tail
     )
-    val fill: Brush = if (mine) Brush.linearGradient(listOf(Color(0xFFFF8A00), Color(0xFFFF375F)))
-    else SolidColor(if (dark) Color.White.copy(alpha = 0.14f) else Color.White.copy(alpha = 0.78f))
-    val textColor = if (mine) Color.White else fg
     Box(
-        Modifier
+        modifier
             .fillMaxWidth()
+            .onSizeChanged { onHeight(it.height) }
             .padding(top = if (topGap) 6.dp else 0.dp),
         contentAlignment = if (mine) Alignment.CenterStart else Alignment.CenterEnd
     ) {
         // right-to-left row: mine = [photo][bubble] on the right, the others = [bubble][photo] on the left.
-        // The photo sits at the bottom of a group of messages (the other messages of the group keep an empty space).
         Row(verticalAlignment = Alignment.Bottom) {
-          if (mine) {
-            if (showAvatar) Avatar(photo, m.name, MSG_AVATAR) else Spacer(Modifier.size(MSG_AVATAR))
-            Spacer(Modifier.width(6.dp))
-          }
-          Column(Modifier.widthIn(max = 260.dp)) {
-            if (showName && m.name.isNotBlank()) {
-                BasicText(
-                    m.name,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(horizontal = 8.dp).padding(bottom = 2.dp),
-                    style = TextStyle(
-                        color = NAME_COLORS[(m.uid.hashCode() and 0x7fffffff) % NAME_COLORS.size],
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                )
+            if (mine) {
+                MsgAvatarSlot(showAvatar, isNew, dropPx, photo, m.name)
+                Spacer(Modifier.width(6.dp))
             }
             Column(
                 Modifier
-                    .background(fill, shape)
-                    .padding(horizontal = 14.dp, vertical = 8.dp)
+                    .widthIn(max = 260.dp)
+                    .graphicsLayer {
+                        val e = enter.value
+                        alpha = e.coerceIn(0f, 1f)
+                        translationY = (1f - e) * 56.dp.toPx()
+                        val sc = 0.8f + 0.2f * e
+                        scaleX = sc
+                        scaleY = sc
+                        transformOrigin = TransformOrigin(if (mine) 1f else 0f, 1f)
+                    }
             ) {
-                BasicText(
-                    m.text,
-                    style = TextStyle(
-                        color = textColor, fontSize = 16.sp, lineHeight = 22.sp,
-                        textDirection = TextDirection.Content
+                if (showName && m.name.isNotBlank()) {
+                    BasicText(
+                        m.name,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 8.dp).padding(bottom = 2.dp),
+                        style = TextStyle(
+                            color = NAME_COLORS[(m.uid.hashCode() and 0x7fffffff) % NAME_COLORS.size],
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                     )
-                )
-                BasicText(
-                    time,
-                    modifier = Modifier.align(Alignment.End).padding(top = 2.dp),
-                    style = TextStyle(color = textColor.copy(alpha = 0.62f), fontSize = 11.sp)
-                )
+                }
+                Column(
+                    Modifier
+                        .background(Color.White, shape)
+                        .padding(horizontal = 14.dp, vertical = 8.dp)
+                ) {
+                    BasicText(
+                        m.text,
+                        style = TextStyle(
+                            color = Color(0xFF101114), fontSize = 16.sp, lineHeight = 22.sp,
+                            textDirection = TextDirection.Content
+                        )
+                    )
+                    BasicText(
+                        time,
+                        modifier = Modifier.align(Alignment.End).padding(top = 2.dp),
+                        style = TextStyle(color = Color(0xFF8A8F98), fontSize = 11.sp)
+                    )
+                }
             }
-          }
-          if (!mine) {
-            Spacer(Modifier.width(6.dp))
-            if (showAvatar) Avatar(photo, m.name, MSG_AVATAR) else Spacer(Modifier.size(MSG_AVATAR))
-          }
+            if (!mine) {
+                Spacer(Modifier.width(6.dp))
+                MsgAvatarSlot(showAvatar, isNew, dropPx, photo, m.name)
+            }
+        }
+    }
+}
+
+/**
+ * The place of the sender's photo beside a message. When a new message of the same person arrives, the photo
+ * of the old last message is gone and the one of the new message falls from the old message down to its place.
+ * (A new person's first message: the photo pops in.)
+ */
+@Composable
+private fun MsgAvatarSlot(show: Boolean, isNew: Boolean, dropPx: Float, photo: Bitmap?, name: String) {
+    val fall = remember { Animatable(if (show && isNew && dropPx > 0f) -dropPx else 0f) }
+    val pop = remember { Animatable(if (show && isNew && dropPx <= 0f) 0f else 1f) }
+    LaunchedEffect(show) {
+        if (show) {
+            if (fall.value != 0f) fall.animateTo(0f, spring(dampingRatio = 0.6f, stiffness = 200f))
+            if (pop.value != 1f) pop.animateTo(1f, spring(dampingRatio = 0.55f, stiffness = 380f))
+        }
+    }
+    Box(Modifier.size(MSG_AVATAR)) {
+        if (show) {
+            Box(
+                Modifier.graphicsLayer {
+                    translationY = fall.value
+                    val sc = pop.value
+                    scaleX = sc
+                    scaleY = sc
+                }
+            ) { Avatar(photo, name, MSG_AVATAR) }
         }
     }
 }
@@ -609,9 +647,9 @@ private fun MessageBubble(
 /** Calm background for the chats: one soft colour, no bright spots (the glass bars refract it). */
 @Composable
 private fun ChatBackground(dark: Boolean, modifier: Modifier = Modifier) {
-    val base = if (dark) listOf(Color(0xFF0C1522), Color(0xFF0F1B2B), Color(0xFF0D1826))
-    else listOf(Color(0xFFF2F6FB), Color(0xFFE9F0F8), Color(0xFFE3EBF5))
-    val glow = if (dark) Color(0xFF2A4A73).copy(alpha = 0.30f) else Color(0xFFBFD6F0).copy(alpha = 0.55f)
+    val base = if (dark) listOf(Color(0xFF2C4468), Color(0xFF283F5F), Color(0xFF233851))
+    else listOf(Color(0xFFD3DFEE), Color(0xFFCBD9EB), Color(0xFFC4D3E8))
+    val glow = if (dark) Color(0xFF5B83B3).copy(alpha = 0.35f) else Color(0xFFE6EFFA).copy(alpha = 0.60f)
     Canvas(modifier) {
         drawRect(Brush.verticalGradient(base))
         val c = Offset(size.width * 0.5f, size.height * 0.08f)

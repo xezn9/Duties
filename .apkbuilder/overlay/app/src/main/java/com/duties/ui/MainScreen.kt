@@ -153,7 +153,7 @@ fun MainScreen(dark: Boolean, introDelayMs: Int = 200) {
                         onViewImage = { viewImage = it },
                         channels = channels,
                         onConfirmRequest = { confirm = it },
-                        hiddenChannelId = chat?.channel?.id,
+                        hiddenChannelId = null,
                         onOpenChat = { ch, from, now ->
                             if (chat == null) {
                                 chat = ChatTarget(ch, from, now)
