@@ -112,27 +112,27 @@ import kotlin.math.roundToInt
 /** The channel that was tapped, where its row is (root coordinates) and a way to ask where the row is now. */
 internal class ChatTarget(val channel: Channel, val from: Rect, val currentBounds: () -> Rect?)
 
-private const val OPEN_MS = 950
-private const val CLOSE_MS = 480
-private val OPEN_EASE = CubicBezierEasing(0.4f, 0f, 0.2f, 1f)
-private val CLOSE_EASE = CubicBezierEasing(0.32f, 0.72f, 0f, 1f)
+internal const val OPEN_MS = 950
+internal const val CLOSE_MS = 480
+internal val OPEN_EASE = CubicBezierEasing(0.4f, 0f, 0.2f, 1f)
+internal val CLOSE_EASE = CubicBezierEasing(0.32f, 0.72f, 0f, 1f)
 
 private val HDR_AVATAR = 40.dp
-private val BLUR_MAX = 9.dp
-private val BAR_BUTTON = 48.dp
+internal val BLUR_MAX = 9.dp
+internal val BAR_BUTTON = 48.dp
 
 /** Where the circle starts: on the channel's avatar inside the tapped row (the row is right-to-left: avatar at the right end). */
 private fun Density.avatarStart(from: Rect): Offset =
     Offset(from.right - ROW_PAD_H.toPx() - ROW_AVATAR.toPx() / 2f, from.center.y)
 
 /** Radius that covers the whole screen from [c]. */
-private fun coverRadius(c: Offset, w: Float, h: Float): Float {
+internal fun coverRadius(c: Offset, w: Float, h: Float): Float {
     val dx = maxOf(c.x, w - c.x)
     val dy = maxOf(c.y, h - c.y)
     return kotlin.math.sqrt(dx * dx + dy * dy) + 2f
 }
 
-private class RoundedRectClip(val r: Rect, val radius: Float) : Shape {
+internal class RoundedRectClip(val r: Rect, val radius: Float) : Shape {
     override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline =
         Outline.Rounded(RoundRect(r, CornerRadius(radius)))
 }
@@ -164,7 +164,10 @@ internal fun ChatMorph(
         keyboard?.hide()
         onClose()
     }
-    BackHandler(enabled = open && target != null) { close() }
+    // the profile of a person (opens from his photo in the chat, see UserProfile.kt)
+    var profile by remember { mutableStateOf<ProfileTarget?>(null) }
+    var profileOpen by remember { mutableStateOf(false) }
+    BackHandler(enabled = open && target != null && profile == null) { close() }
 
     LaunchedEffect(target, open) {
         if (open && target != null) {
@@ -214,7 +217,15 @@ internal fun ChatMorph(
                     senderName = senderName,
                     myPhoto = myPhoto,
                     reveal = { seg(p.value, 0.35f, 0.85f) },
-                    onBack = close
+                    onBack = close,
+                    onAvatarClick = { pt ->
+                        if (profile == null) {
+                            focus.clearFocus()
+                            keyboard?.hide()
+                            profile = pt
+                            profileOpen = true
+                        }
+                    }
                 )
 
                 // the avatar itself, scaled up from its place until it fills the circle; it fades into the chat
@@ -258,6 +269,15 @@ internal fun ChatMorph(
                     style = Stroke(0.9.dp.toPx())
                 )
             }
+
+            // ---- the profile of the person whose photo was tapped: grows out of that photo (same animation)
+            UserProfileMorph(
+                target = profile,
+                open = profileOpen,
+                dark = dark,
+                onClose = { profileOpen = false },
+                onDismissed = { profile = null }
+            )
         }
     }
 }
@@ -274,7 +294,8 @@ private fun ChatContent(
     senderName: String,
     myPhoto: Bitmap?,
     reveal: () -> Float,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onAvatarClick: (ProfileTarget) -> Unit
 ) {
     val fg = if (dark) Color.White else Color(0xFF101114)
     val sub = if (dark) Color(0xFFB0B3B8) else Color(0xFF55586A)
@@ -359,6 +380,7 @@ private fun ChatContent(
                         isNew = isNew,
                         dropPx = dropPx,
                         onHeight = { heights[m.id] = it },
+                        onAvatarClick = onAvatarClick,
                         fg = fg,
                         time = timeFormat.format(Date(m.createdAtMs))
                     )
@@ -532,6 +554,7 @@ private fun MessageBubble(
     isNew: Boolean,
     dropPx: Float,
     onHeight: (Int) -> Unit,
+    onAvatarClick: (ProfileTarget) -> Unit,
     fg: Color,
     time: String,
     modifier: Modifier = Modifier
@@ -539,6 +562,10 @@ private fun MessageBubble(
     val context = LocalContext.current
     LaunchedEffect(m.uid) { UserPhotos.request(context, m.uid) }
     val photo = (if (mine) myPhoto else null) ?: UserPhotos.photos[m.uid]
+    // tap on the sender's photo = open his profile (it grows out of the photo)
+    val openProfile: (Rect) -> Unit = { r ->
+        onAvatarClick(ProfileTarget(m.uid, m.name, photo, r))
+    }
 
     // a new message pops up from the bottom (where the writing bar is) with a soft spring
     val enter = remember { Animatable(if (isNew) 0f else 1f) }
@@ -572,7 +599,7 @@ private fun MessageBubble(
         // right-to-left row: mine = [photo][bubble] on the right, the others = [bubble][photo] on the left.
         Row(verticalAlignment = Alignment.Bottom) {
             if (mine) {
-                MsgAvatarSlot(showAvatar, isNew, dropPx, photo, m.name)
+                MsgAvatarSlot(showAvatar, isNew, dropPx, photo, m.name, openProfile)
                 Spacer(Modifier.width(6.dp))
             }
             Column(
@@ -621,7 +648,7 @@ private fun MessageBubble(
             }
             if (!mine) {
                 Spacer(Modifier.width(6.dp))
-                MsgAvatarSlot(showAvatar, isNew, dropPx, photo, m.name)
+                MsgAvatarSlot(showAvatar, isNew, dropPx, photo, m.name, openProfile)
             }
         }
     }
@@ -634,7 +661,8 @@ private fun MessageBubble(
  * (A new person's first message: the photo pops in.)
  */
 @Composable
-private fun MsgAvatarSlot(show: Boolean, isNew: Boolean, dropPx: Float, photo: Bitmap?, name: String) {
+private fun MsgAvatarSlot(show: Boolean, isNew: Boolean, dropPx: Float, photo: Bitmap?, name: String, onClick: (Rect) -> Unit) {
+    var bounds by remember { mutableStateOf(Rect.Zero) }
     val fall = remember { Animatable(if (show && isNew && dropPx > 0f) -dropPx else 0f) }
     val pop = remember { Animatable(if (show && isNew && dropPx <= 0f) 0f else 1f) }
     LaunchedEffect(show) {
@@ -643,10 +671,16 @@ private fun MsgAvatarSlot(show: Boolean, isNew: Boolean, dropPx: Float, photo: B
             if (pop.value != 1f) pop.animateTo(1f, spring(dampingRatio = 0.55f, stiffness = 380f))
         }
     }
-    Box(Modifier.size(MSG_AVATAR)) {
+    Box(
+        Modifier
+            .size(MSG_AVATAR)
+            .onGloballyPositioned { bounds = it.boundsInRoot() }
+    ) {
         if (show) {
             Box(
-                Modifier.graphicsLayer {
+                Modifier
+                    .pointerInput(Unit) { detectTapGestures(onTap = { onClick(bounds) }) }
+                    .graphicsLayer {
                     translationY = fall.value
                     val sc = pop.value
                     scaleX = sc

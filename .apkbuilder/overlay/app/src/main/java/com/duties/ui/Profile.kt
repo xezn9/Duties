@@ -22,6 +22,7 @@ import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
 import kotlin.math.roundToInt
@@ -138,6 +139,9 @@ class ProfileState(
         val photoText = if (avatarChanged) withContext(Dispatchers.Default) { avatar.cropped?.let { encodeUserPhoto(it) } } else null
         pushToServer(name, username, bio, avatarChanged, photoText)
         if (banner !== this.banner) syncBannerGif(banner)
+        // the full photo and the still banner go to the Realtime Database too, so other people see the real ones
+        val firstPics = !prefs.getBoolean("pics_on_server", false)
+        syncPics(avatar, banner, avatarChanged || firstPics, banner !== this.banner || firstPics)
         var savedBanner = banner
         var savedAvatar = avatar
         withContext(Dispatchers.IO) {
@@ -224,6 +228,37 @@ class ProfileState(
         } catch (e: Exception) {
             // offline or no permission: keep what is on the phone
         }
+    }
+
+    // -----------------------------------------------------------------
+    // The photo and the (still) banner in the Realtime Database, for the profile page other people open
+    //   profilePics/{uid} = { avatar: base64 JPEG (512 px), banner: base64 JPEG (1080 px), updatedAt }
+    // A banner GIF is in bannerGifs (below); the still picture here is its first frame.
+    // -----------------------------------------------------------------
+    private fun picsRef() = FirebaseDatabase.getInstance().getReference("profilePics").child(uid)
+
+    /** Uploads the changed picture(s); an empty picture removes it. Silent when it fails (offline / rules not published). */
+    private suspend fun syncPics(avatar: ImageSlot, banner: ImageSlot, avatarChanged: Boolean, bannerChanged: Boolean) {
+        if (!avatarChanged && !bannerChanged) return
+        try {
+            val up = HashMap<String, Any?>()
+            if (avatarChanged) up["avatar"] = withContext(Dispatchers.Default) { avatar.cropped?.let { encodePic(it, 512, 85) } }
+            if (bannerChanged) up["banner"] = withContext(Dispatchers.Default) { banner.cropped?.let { encodePic(it, 1080, 80) } }
+            up["updatedAt"] = ServerValue.TIMESTAMP
+            picsRef().updateChildren(up).await()
+            prefs.edit().putBoolean("pics_on_server", true).apply()
+        } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // tried again at the next start / save
+        }
+    }
+
+    /** Accounts that already had pictures before this update: puts them on the server once. */
+    suspend fun syncPicsToServer() {
+        if (prefs.getBoolean("pics_on_server", false)) return
+        if (avatar.cropped == null && banner.cropped == null) return
+        syncPics(avatar, banner, true, true)
     }
 
     // -----------------------------------------------------------------
@@ -413,6 +448,7 @@ fun rememberProfileState(uid: String, displayName: String?, email: String?): Pro
         state.loadImages()
         state.syncFromServer()
         state.syncAvatarToServer()
+        state.syncPicsToServer()
         state.restoreBannerGif()
     }
     return state
@@ -577,4 +613,15 @@ fun cropToBannerFrame(source: Bitmap, tf: CropTransform?, outW: Int = 1080): Bit
         android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG or android.graphics.Paint.ANTI_ALIAS_FLAG)
     )
     return out
+}
+
+/** Square / banner picture as base64 JPEG text, scaled down so its longest side is at most [maxSide]. */
+fun encodePic(src: Bitmap, maxSide: Int, quality: Int): String {
+    val k = maxSide.toFloat() / maxOf(src.width, src.height)
+    val bmp = if (k < 1f) Bitmap.createScaledBitmap(
+        src, (src.width * k).roundToInt().coerceAtLeast(1), (src.height * k).roundToInt().coerceAtLeast(1), true
+    ) else src
+    val out = ByteArrayOutputStream()
+    bmp.compress(Bitmap.CompressFormat.JPEG, quality, out)
+    return Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
 }
