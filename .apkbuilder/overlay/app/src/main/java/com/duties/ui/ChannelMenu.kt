@@ -27,6 +27,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -44,16 +45,18 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.duties.R
 import com.kyant.backdrop.Backdrop
-import com.kyant.backdrop.catalog.components.LiquidButton
+import com.kyant.backdrop.catalog.components.LiquidDialog
 import kotlin.math.roundToInt
 
 /*
@@ -63,8 +66,8 @@ import kotlin.math.roundToInt
  *    open, sharpens from a blur and its items come one after another). The page behind blurs and dims.
  *      owner  : Archive, Mute, Delete channel, Leave channel
  *      member : Archive, Mute, Leave channel
- *    Archive and Mute are empty for now (they only close the menu).
- *  - [ConfirmOverlay]: "are you sure?" for the two that really change something (delete / leave).
+ *    Archive and Mute are empty for now (they only close the menu). No dark veil: the page behind only blurs.
+ *  - [ChannelConfirmDialog]: "are you sure?" (LiquidDialog) for the two that really change something (delete / leave).
  */
 
 private val DANGER = Color(0xFFFF453A)
@@ -146,12 +149,10 @@ internal fun ChannelActionOverlay(
         val x = (row.right - with(density) { 20.dp.toPx() } - w).coerceIn(margin, (maxW - w - margin).coerceAtLeast(margin))
         val y = (if (below) row.bottom - overlap else row.top - h + overlap).coerceAtLeast(margin)
 
-        // dark veil
+        // no dark veil: the page behind only blurs (see HomePage). This invisible layer just closes the menu on a tap outside.
         Box(
             Modifier
                 .fillMaxSize()
-                .graphicsLayer { alpha = p.value.coerceIn(0f, 1f) }
-                .background(Color.Black.copy(alpha = if (dark) 0.42f else 0.22f))
                 .pointerInput(Unit) { detectTapGestures { onDismiss() } }
         )
         // the pressed row stays lit
@@ -281,117 +282,50 @@ private fun MenuItem(
 }
 
 // =====================================================================
-// "Are you sure?"
+// "Are you sure?"  (the app's liquid glass dialog)
 // =====================================================================
+/**
+ * Delete / leave confirmation with [LiquidDialog] (the same dialog as the sign-out one).
+ * It must be placed OUTSIDE the box that is recorded into [backdrop] and cover the whole screen (see MainScreen),
+ * so the glass refracts everything behind it.
+ */
 @Composable
-internal fun ConfirmOverlay(
+internal fun ChannelConfirmDialog(
     request: ConfirmRequest?,
     dark: Boolean,
     backdrop: Backdrop,
     onConfirm: (ConfirmRequest) -> Unit,
     onDismiss: () -> Unit
 ) {
+    // keep the last request so the text does not change while the dialog fades out
     var shown by remember { mutableStateOf<ConfirmRequest?>(null) }
-    val p = remember { Animatable(0f) }
-    LaunchedEffect(request) {
-        if (request != null) {
-            shown = request
-            p.snapTo(0f)
-            p.animateTo(1f, spring(dampingRatio = 0.78f, stiffness = 330f))
-        } else if (shown != null) {
-            p.animateTo(0f, tween(160))
-            shown = null
+    if (request != null) shown = request
+    val r = shown
+    val ch = r?.channel
+    val name = ch?.name ?: ""
+    val isDelete = r?.action == ChannelAction.Delete
+    val owner = ch?.isOwner == true
+    val members = ch?.memberCount ?: 0
+
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+        val title = stringResource(if (isDelete) R.string.home_confirm_delete_title else R.string.home_confirm_leave_title)
+        val message = when {
+            isDelete -> stringResource(R.string.home_confirm_delete_msg, name)
+            owner && members > 1 -> stringResource(R.string.home_confirm_leave_owner_msg, name)
+            owner -> stringResource(R.string.home_confirm_leave_alone_msg, name)
+            else -> stringResource(R.string.home_confirm_leave_msg, name)
         }
-    }
-    val r = shown ?: return
-    BackHandler(enabled = request != null) { onDismiss() }
-
-    val fg = if (dark) Color.White else Color(0xFF101114)
-    val isDelete = r.action == ChannelAction.Delete
-    val ch = r.channel
-    val title = stringResource(if (isDelete) R.string.home_confirm_delete_title else R.string.home_confirm_leave_title)
-    val message = when {
-        isDelete -> stringResource(R.string.home_confirm_delete_msg, ch.name)
-        ch.isOwner && ch.memberCount > 1 -> stringResource(R.string.home_confirm_leave_owner_msg, ch.name)
-        ch.isOwner -> stringResource(R.string.home_confirm_leave_alone_msg, ch.name)
-        else -> stringResource(R.string.home_confirm_leave_msg, ch.name)
-    }
-
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Box(
-            Modifier
-                .fillMaxSize()
-                .graphicsLayer { alpha = p.value.coerceIn(0f, 1f) }
-                .background(Color.Black.copy(alpha = if (dark) 0.55f else 0.30f))
-                .pointerInput(Unit) { detectTapGestures { onDismiss() } }
+        LiquidDialog(
+            visible = request != null,
+            onDismiss = onDismiss,
+            backdrop = backdrop,
+            dark = dark,
+            title = title,
+            message = message,
+            confirmText = stringResource(if (isDelete) R.string.home_confirm_delete_yes else R.string.home_confirm_leave_yes),
+            dismissText = stringResource(R.string.home_confirm_cancel),
+            confirmTint = DANGER,
+            onConfirm = { r?.let(onConfirm) }
         )
-        val shape = RoundedCornerShape(30.dp)
-        Column(
-            Modifier
-                .padding(horizontal = 28.dp)
-                .fillMaxWidth()
-                .graphicsLayer {
-                    val k = p.value
-                    val open = k.coerceIn(0f, 1f)
-                    val s = 0.80f + 0.20f * k
-                    scaleX = s
-                    scaleY = s
-                    alpha = (open * 1.6f).coerceIn(0f, 1f)
-                    renderEffect = blurEffect(12.dp.toPx() * (1f - open))
-                }
-                .liquidCard(backdrop, shape, dark)
-                .background(
-                    if (dark) Color(0xFF16161C).copy(alpha = 0.90f) else Color.White.copy(alpha = 0.92f),
-                    shape
-                )
-                .pointerInput(Unit) { detectTapGestures { } }
-                .padding(20.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Box(
-                Modifier.size(52.dp).clip(CircleShape).background(DANGER.copy(alpha = 0.16f)),
-                contentAlignment = Alignment.Center
-            ) { GlyphIcon(if (isDelete) R.drawable.ic_delete else R.drawable.ic_logout, DANGER, 28.dp) }
-            Spacer(Modifier.height(14.dp))
-            BasicText(
-                title,
-                style = TextStyle(color = fg, fontSize = 20.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-            )
-            Spacer(Modifier.height(8.dp))
-            BasicText(
-                message,
-                modifier = Modifier.fillMaxWidth(),
-                style = TextStyle(color = fg.copy(alpha = 0.70f), fontSize = 14.sp, lineHeight = 21.sp, textAlign = TextAlign.Center)
-            )
-            Spacer(Modifier.height(18.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                LiquidButton(
-                    onClick = { onConfirm(r) },
-                    backdrop = backdrop,
-                    tint = DANGER,
-                    modifier = Modifier.weight(1f).height(48.dp)
-                ) {
-                    BasicText(
-                        stringResource(if (isDelete) R.string.home_confirm_delete_yes else R.string.home_confirm_leave_yes),
-                        maxLines = 1,
-                        softWrap = false,
-                        style = TextStyle(color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                    )
-                }
-                LiquidButton(
-                    onClick = onDismiss,
-                    backdrop = backdrop,
-                    surfaceColor = if (dark) Color.White.copy(alpha = 0.10f) else Color.White.copy(alpha = 0.30f),
-                    modifier = Modifier.weight(1f).height(48.dp)
-                ) {
-                    BasicText(
-                        stringResource(R.string.home_confirm_cancel),
-                        maxLines = 1,
-                        softWrap = false,
-                        style = TextStyle(color = fg, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-                    )
-                }
-            }
-        }
     }
 }

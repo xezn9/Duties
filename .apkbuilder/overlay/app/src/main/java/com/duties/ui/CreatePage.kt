@@ -194,6 +194,10 @@ fun CreatePage(
         val current = pagerState.currentPage
         val last = STEPS.lastIndex
         val firstCascadeUsed = remember { BooleanArray(1).also { it[0] = initiallyFolded } }
+        // The tab opens with the guide already folded: the two buttons ("read the rules again" and "Create channel")
+        // come in with the page animation of the other tabs (Reveal: fade in while rising), one after the other
+        // right behind the title. Null = nothing extra (guide open: the buttons are shown as before).
+        val entryDelays = remember { if (initiallyFolded) intArrayOf(cascade.take(), cascade.take()) else null }
 
         // fold: 0 = guide open, 1 = guide sucked into the button
         val fold = remember { Animatable(if (initiallyFolded) 1f else 0f) }
@@ -322,6 +326,7 @@ fun CreatePage(
                     collapsed = collapsed,
                     dark = dark,
                     backdrop = backdrop,
+                    entryDelays = entryDelays,
                     onTarget = { suckTarget = it },
                     windowP = { win.value },
                     windowOpen = windowOpen,
@@ -357,10 +362,8 @@ fun CreatePage(
                     }
                 )
             }
-            // The buttons are drawn from the very first frame of the tab. (They used to wait for their turn in the
-            // tab's cascade and then fade in for 760 ms: when the phone was busy opening the tab, that is what
-            // made the "read the rules again" button show up one or two seconds late.) The tab's circular wave
-            // already reveals them, so nothing else is needed.
+            // The buttons are composed from the very first frame of the tab (the tab's circular wave reveals them).
+            // When the tab opens with the guide folded, the two buttons additionally play Reveal (see entryDelays).
             controls(controlsModifier)
         }
     }
@@ -379,6 +382,7 @@ private fun Controls(
     collapsed: Boolean,
     dark: Boolean,
     backdrop: Backdrop,
+    entryDelays: IntArray?,
     onTarget: (Offset) -> Unit,
     windowP: () -> Float,
     windowOpen: Boolean,
@@ -437,6 +441,23 @@ private fun Controls(
     }
     val riseDp = 74.dp
 
+    // page animation (Reveal) of the two buttons when the tab is entered with the guide folded
+    val pillIn = remember { Animatable(if (entryDelays != null) 0f else 1f) }
+    val createIn = remember { Animatable(if (entryDelays != null) 0f else 1f) }
+    LaunchedEffect(Unit) {
+        if (entryDelays != null) {
+            launch {
+                delay(entryDelays[0].toLong())
+                pillIn.animateTo(1f, tween(760, easing = POWER4_OUT))
+            }
+            launch {
+                delay(entryDelays[1].toLong())
+                createIn.animateTo(1f, tween(760, easing = POWER4_OUT))
+            }
+        }
+    }
+    val revealDy = 22.dp
+
     Column(modifier) {
         Box(Modifier.fillMaxWidth().graphicsLayer { alpha = 1f - seg(e, 0f, 0.35f) }) {
             Dots(current = current, count = STEPS.size, dark = dark)
@@ -472,9 +493,9 @@ private fun Controls(
                             .height(bh)
                             .graphicsLayer {
                                 // it falls out of the droplet: starts up at the pill, drops to its place
-                                translationY = -riseDp.toPx() * (1f - cf)
+                                translationY = -riseDp.toPx() * (1f - cf) + (1f - createIn.value) * revealDy.toPx()
                                 // once the window starts, the drop (the window itself) takes this button's place
-                                alpha = seg(cf, 0f, 0.2f) * (if (windowP() > 0.002f) 0f else 1f)
+                                alpha = seg(cf, 0f, 0.2f) * (if (windowP() > 0.002f) 0f else 1f) * createIn.value
                                 renderEffect = blurEffect(10.dp.toPx() * (1f - seg(cf, 0f, 0.7f)))
                             }
                     ) {
@@ -546,7 +567,8 @@ private fun Controls(
                             // droplet: it lifts off (spring overshoot makes it wobble), stretched tall while moving
                             val r = rise
                             val travel = sin(PI.toFloat() * r.coerceIn(0f, 1f))
-                            translationY = -riseDp.toPx() * r
+                            translationY = -riseDp.toPx() * r + (1f - pillIn.value) * revealDy.toPx()
+                            alpha = pillIn.value
                             scaleX = g * (1f - 0.14f * travel)
                             scaleY = g * (1f + 0.22f * travel)
                         }

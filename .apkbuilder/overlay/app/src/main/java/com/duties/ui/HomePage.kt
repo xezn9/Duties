@@ -79,17 +79,15 @@ fun HomePage(
     cascade: Cascade,
     onAccept: (Invite) -> Unit,
     onDecline: (Invite) -> Unit,
-    onDeleteChannel: (Channel) -> Unit,
-    onLeaveChannel: (Channel) -> Unit,
+    onConfirmRequest: (ConfirmRequest) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val textColor = if (dark) Color.White else Color(0xFF101114)
     val subColor = if (dark) Color(0xFFB0B3B8) else Color(0xFF55586A)
     val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
-    // long press menu + "are you sure?"
+    // long press menu ("are you sure?" is a LiquidDialog drawn by MainScreen, over the whole screen)
     var menu by remember { mutableStateOf<MenuTarget?>(null) }
-    var confirm by remember { mutableStateOf<ConfirmRequest?>(null) }
     val menuP = remember { Animatable(0f) }
     // rows that already came in: they do not come in again when they are scrolled back into view
     val played = remember { HashSet<String>() }
@@ -153,7 +151,7 @@ fun HomePage(
                             ChannelRow(
                                 ch, dark, textColor, subColor,
                                 onLongPress = { bounds ->
-                                    if (menu == null && confirm == null) menu = MenuTarget(ch, bounds)
+                                    if (menu == null) menu = MenuTarget(ch, bounds)
                                 }
                             )
                         }
@@ -172,21 +170,7 @@ fun HomePage(
                     when (action) {
                         // empty for now
                         ChannelAction.Archive, ChannelAction.Mute -> Unit
-                        ChannelAction.Delete, ChannelAction.Leave -> confirm = ConfirmRequest(ch, action)
-                    }
-                }
-            )
-            ConfirmOverlay(
-                request = confirm,
-                dark = dark,
-                backdrop = backdrop,
-                onDismiss = { confirm = null },
-                onConfirm = { req ->
-                    confirm = null
-                    when (req.action) {
-                        ChannelAction.Delete -> onDeleteChannel(req.channel)
-                        ChannelAction.Leave -> onLeaveChannel(req.channel)
-                        else -> Unit
+                        ChannelAction.Delete, ChannelAction.Leave -> onConfirmRequest(ConfirmRequest(ch, action))
                     }
                 }
             )

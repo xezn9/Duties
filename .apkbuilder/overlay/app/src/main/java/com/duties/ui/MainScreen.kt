@@ -110,6 +110,8 @@ fun MainScreen(dark: Boolean, introDelayMs: Int = 200) {
     val push = remember { PushController(scope) }
     // banner / profile photo shown full screen (null = closed); it sits above the tab bar
     var viewImage by remember { mutableStateOf<ViewedImage?>(null) }
+    // delete / leave channel confirmation (LiquidDialog): lives here so its scrim and glass cover the whole screen
+    var confirm by remember { mutableStateOf<ConfirmRequest?>(null) }
 
     PushStack(
         controller = push,
@@ -135,8 +137,7 @@ fun MainScreen(dark: Boolean, introDelayMs: Int = 200) {
                         onSettings = { from -> push.open("settings", from, circular = true) },
                         onViewImage = { viewImage = it },
                         channels = channels,
-                        onDeleteChannel = deleteChannel,
-                        onLeaveChannel = leaveChannel,
+                        onConfirmRequest = { confirm = it },
                         rulesFolded = rulesFolded,
                         onRulesFolded = {
                             rulesFolded = it
@@ -185,6 +186,22 @@ fun MainScreen(dark: Boolean, introDelayMs: Int = 200) {
                 }
             }
 
+            // outside the box that is recorded into `backdrop` (as the LiquidDialog README says)
+            ChannelConfirmDialog(
+                request = confirm,
+                dark = dark,
+                backdrop = backdrop,
+                onDismiss = { confirm = null },
+                onConfirm = { req ->
+                    confirm = null
+                    when (req.action) {
+                        ChannelAction.Delete -> deleteChannel(req.channel)
+                        ChannelAction.Leave -> leaveChannel(req.channel)
+                        else -> Unit
+                    }
+                }
+            )
+
             ImageViewerHost(viewImage) { viewImage = null }
         }
     }
@@ -200,8 +217,7 @@ private fun TabPage(
     onSettings: (Rect) -> Unit,
     onViewImage: (ViewedImage) -> Unit,
     channels: ChannelsState,
-    onDeleteChannel: (Channel) -> Unit,
-    onLeaveChannel: (Channel) -> Unit,
+    onConfirmRequest: (ConfirmRequest) -> Unit,
     rulesFolded: Boolean,
     onRulesFolded: (Boolean) -> Unit
 ) {
@@ -269,8 +285,7 @@ private fun TabPage(
                     cascade = cascade,
                     onAccept = { inv -> scope.launch { runCatching { channels.accept(inv) }.onFailure { failToast() } } },
                     onDecline = { inv -> scope.launch { runCatching { channels.decline(inv) }.onFailure { failToast() } } },
-                    onDeleteChannel = onDeleteChannel,
-                    onLeaveChannel = onLeaveChannel,
+                    onConfirmRequest = onConfirmRequest,
                     modifier = Modifier.weight(1f)
                 )
             }
