@@ -3,7 +3,7 @@ rules_version = '2';
 // Duties - Firestore rules
 // users/{uid}        : the profile (name, username, bio) - only the owner can write it
 // usernames/{name}   : makes every @username unique (document id = lowercase username)
-// channels/{id}      : a channel (only its owner can read / write it)
+// channels/{id}      : a channel (owner and members can read it; the owner can delete it; a member can leave it)
 // channelUsernames/{name} : makes every channel @username unique
 // invites/{channelId}_{uid} : an invitation to a channel (pending / accepted / declined)
 service cloud.firestore {
@@ -77,6 +77,19 @@ service cloud.firestore {
           && request.auth.uid in request.resource.data.members
           && request.resource.data.members.size() == resource.data.members.size() + 1
           && get(/databases/$(database)/documents/invites/$(id + '_' + request.auth.uid)).data.status == 'pending')
+        // a member leaves: only his own name goes out of "members"
+        || (resource.data.ownerUid != request.auth.uid
+          && request.auth.uid in resource.data.members
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members'])
+          && !(request.auth.uid in request.resource.data.members)
+          && request.resource.data.members.size() == resource.data.members.size() - 1)
+        // the owner leaves while other people are inside: the channel goes to one of the members
+        || (resource.data.ownerUid == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ownerUid', 'members'])
+          && request.resource.data.ownerUid != request.auth.uid
+          && request.resource.data.ownerUid in request.resource.data.members
+          && !(request.auth.uid in request.resource.data.members)
+          && request.resource.data.members.size() == resource.data.members.size() - 1)
       );
       allow delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
     }
@@ -120,7 +133,13 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly(['uid', 'channelId'])
         && request.resource.data.uid == request.auth.uid;
       allow delete: if signedIn() && resource.data.uid == request.auth.uid;
-      allow update: if false;
+      // only when the owner leaves: the @username follows the channel to its new owner
+      allow update: if signedIn()
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.keys().hasOnly(['uid', 'channelId'])
+        && request.resource.data.channelId == resource.data.channelId
+        && request.resource.data.uid != request.auth.uid
+        && getAfter(/databases/$(database)/documents/channels/$(resource.data.channelId)).data.ownerUid == request.resource.data.uid;
     }
 
     match /{document=**} {

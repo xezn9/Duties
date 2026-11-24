@@ -357,14 +357,11 @@ fun CreatePage(
                     }
                 )
             }
-            if (initiallyFolded) {
-                // the tab opened with the guide already folded: the small button comes in with the tab's cascade
-                Reveal(delayMs = remember { cascade.take() }, modifier = controlsModifier, dy = 12.dp) {
-                    controls(Modifier.fillMaxWidth())
-                }
-            } else {
-                controls(controlsModifier)
-            }
+            // The buttons are drawn from the very first frame of the tab. (They used to wait for their turn in the
+            // tab's cascade and then fade in for 760 ms: when the phone was busy opening the tab, that is what
+            // made the "read the rules again" button show up one or two seconds late.) The tab's circular wave
+            // already reveals them, so nothing else is needed.
+            controls(controlsModifier)
         }
     }
 }

@@ -1,7 +1,12 @@
 package com.duties.ui
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +23,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.kyant.backdrop.Backdrop
@@ -26,13 +32,24 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
@@ -44,14 +61,14 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.duties.R
-import java.text.SimpleDateFormat
-import java.util.Calendar
-import java.util.Date
-import java.util.Locale
+import kotlinx.coroutines.delay
 
 /**
- * Home tab: the channels of the account as a chat list (photo, name, last line, time).
+ * Home tab: the channels of the account as a chat list (photo, name, last line, number of members).
  * The newest channel is on top. Empty for now when there are no channels.
+ *
+ * Entering the tab: the rows come in one after another, right behind the title (HyperSpring cascade: each row
+ * rises, sharpens from a blur and settles). Long press on a row: a small menu (see ChannelMenu.kt).
  */
 @Composable
 fun HomePage(
@@ -62,59 +79,158 @@ fun HomePage(
     cascade: Cascade,
     onAccept: (Invite) -> Unit,
     onDecline: (Invite) -> Unit,
+    onDeleteChannel: (Channel) -> Unit,
+    onLeaveChannel: (Channel) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val textColor = if (dark) Color.White else Color(0xFF101114)
     val subColor = if (dark) Color(0xFFB0B3B8) else Color(0xFF55586A)
     val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
+    // long press menu + "are you sure?"
+    var menu by remember { mutableStateOf<MenuTarget?>(null) }
+    var confirm by remember { mutableStateOf<ConfirmRequest?>(null) }
+    val menuP = remember { Animatable(0f) }
+    // rows that already came in: they do not come in again when they are scrolled back into view
+    val played = remember { HashSet<String>() }
+
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-        Reveal(delayMs = remember { cascade.take() }, modifier = modifier.fillMaxWidth(), dy = 14.dp) {
+        Box(modifier.fillMaxWidth()) {
             if (channels.isEmpty() && invites.isEmpty()) {
-                Box(Modifier.fillMaxSize().padding(horizontal = 40.dp, vertical = 60.dp), contentAlignment = Alignment.TopCenter) {
-                    BasicText(
-                        stringResource(R.string.home_empty),
-                        style = TextStyle(color = subColor, fontSize = 15.sp, lineHeight = 22.sp, textAlign = TextAlign.Center)
-                    )
+                Reveal(delayMs = remember { cascade.take() }, modifier = Modifier.fillMaxSize(), dy = 14.dp) {
+                    Box(Modifier.fillMaxSize().padding(horizontal = 40.dp, vertical = 60.dp), contentAlignment = Alignment.TopCenter) {
+                        BasicText(
+                            stringResource(R.string.home_empty),
+                            style = TextStyle(color = subColor, fontSize = 15.sp, lineHeight = 22.sp, textAlign = TextAlign.Center)
+                        )
+                    }
                 }
             } else {
                 LazyColumn(
-                    Modifier.fillMaxSize(),
+                    Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            // while the menu is open the list behind it softly blurs
+                            val v = menuP.value.coerceIn(0f, 1f)
+                            renderEffect = blurEffect(5.dp.toPx() * v)
+                        },
                     contentPadding = PaddingValues(top = 8.dp, bottom = 130.dp + navBottom)
                 ) {
                     if (invites.isNotEmpty()) {
                         item(key = "invites-title") {
-                            BasicText(
-                                stringResource(R.string.home_invites_title) + "  (" + invites.size + ")",
-                                modifier = Modifier.animateItem().padding(horizontal = 24.dp, vertical = 6.dp),
-                                style = TextStyle(color = subColor, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                            )
-                        }
-                        items(invites, key = { "inv-" + it.id }) { inv ->
-                            InviteCard(
-                                inv, dark, backdrop, textColor, subColor,
-                                onAccept = { onAccept(inv) },
-                                onDecline = { onDecline(inv) },
-                                modifier = Modifier.animateItem()
-                            )
-                        }
-                        if (channels.isNotEmpty()) {
-                            item(key = "chats-title") {
+                            Entrance("invites-title", played, cascade, true, Modifier.animateItem()) {
                                 BasicText(
-                                    stringResource(R.string.home_channels_title),
-                                    modifier = Modifier.animateItem().padding(start = 24.dp, end = 24.dp, top = 14.dp, bottom = 2.dp),
+                                    stringResource(R.string.home_invites_title) + "  (" + invites.size + ")",
+                                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 6.dp),
                                     style = TextStyle(color = subColor, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                                 )
                             }
                         }
+                        items(invites, key = { "inv-" + it.id }) { inv ->
+                            Entrance("inv-" + inv.id, played, cascade, true, Modifier.animateItem()) {
+                                InviteCard(
+                                    inv, dark, backdrop, textColor, subColor,
+                                    onAccept = { onAccept(inv) },
+                                    onDecline = { onDecline(inv) }
+                                )
+                            }
+                        }
+                        if (channels.isNotEmpty()) {
+                            item(key = "chats-title") {
+                                Entrance("chats-title", played, cascade, true, Modifier.animateItem()) {
+                                    BasicText(
+                                        stringResource(R.string.home_channels_title),
+                                        modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 14.dp, bottom = 2.dp),
+                                        style = TextStyle(color = subColor, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                    )
+                                }
+                            }
+                        }
                     }
-                    items(channels, key = { "ch-" + it.id }) { ch ->
-                        ChannelRow(ch, dark, textColor, subColor, Modifier.animateItem())
+                    itemsIndexed(channels, key = { _, ch -> "ch-" + ch.id }) { index, ch ->
+                        // only the rows that are on the screen when the tab opens come in one by one
+                        Entrance("ch-" + ch.id, played, cascade, index < FIRST_SCREEN_ROWS, Modifier.animateItem()) {
+                            ChannelRow(
+                                ch, dark, textColor, subColor,
+                                onLongPress = { bounds ->
+                                    if (menu == null && confirm == null) menu = MenuTarget(ch, bounds)
+                                }
+                            )
+                        }
                     }
                 }
             }
+
+            ChannelActionOverlay(
+                target = menu,
+                p = menuP,
+                dark = dark,
+                backdrop = backdrop,
+                onDismiss = { menu = null },
+                onAction = { ch, action ->
+                    menu = null
+                    when (action) {
+                        // empty for now
+                        ChannelAction.Archive, ChannelAction.Mute -> Unit
+                        ChannelAction.Delete, ChannelAction.Leave -> confirm = ConfirmRequest(ch, action)
+                    }
+                }
+            )
+            ConfirmOverlay(
+                request = confirm,
+                dark = dark,
+                backdrop = backdrop,
+                onDismiss = { confirm = null },
+                onConfirm = { req ->
+                    confirm = null
+                    when (req.action) {
+                        ChannelAction.Delete -> onDeleteChannel(req.channel)
+                        ChannelAction.Leave -> onLeaveChannel(req.channel)
+                        else -> Unit
+                    }
+                }
+            )
         }
     }
+}
+
+private const val FIRST_SCREEN_ROWS = 9
+
+/**
+ * HyperSpring entrance of one list element: it waits for its turn in the tab's [cascade], then rises, sharpens
+ * from a blur and settles. [animate] = false (rows far below the screen) shows it at once, and an element that
+ * already came in once ([played]) is never animated again.
+ */
+@Composable
+private fun Entrance(
+    key: String,
+    played: MutableSet<String>,
+    cascade: Cascade,
+    animate: Boolean,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    val skip = remember { !animate || key in played }
+    val delayMs = remember { if (skip) 0 else cascade.take() }
+    val a = remember { Animatable(if (skip) 1f else 0f) }
+    LaunchedEffect(Unit) {
+        played += key
+        if (!skip) {
+            delay(delayMs.toLong())
+            a.animateTo(1f, tween(720, easing = SETTLE))
+        }
+    }
+    Box(
+        modifier.graphicsLayer {
+            val t = a.value
+            alpha = (t * 1.6f).coerceIn(0f, 1f)
+            translationY = (1f - t) * 26.dp.toPx()
+            val s = 0.94f + 0.06f * t
+            scaleX = s
+            scaleY = s
+            renderEffect = blurEffect(10.dp.toPx() * (1f - t))
+        }
+    ) { content() }
 }
 
 /** An invitation: who invited me to which channel, with Accept / Decline. */
@@ -216,10 +332,42 @@ private fun Avatar(photo: android.graphics.Bitmap?, name: String, size: androidx
 }
 
 @Composable
-private fun ChannelRow(ch: Channel, dark: Boolean, textColor: Color, subColor: Color, modifier: Modifier = Modifier) {
+private fun ChannelRow(
+    ch: Channel,
+    dark: Boolean,
+    textColor: Color,
+    subColor: Color,
+    onLongPress: (androidx.compose.ui.geometry.Rect) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val haptic = LocalHapticFeedback.current
+    val coords = remember { arrayOfNulls<LayoutCoordinates>(1) }
+    var pressed by remember { mutableStateOf(false) }
+    val press by animateFloatAsState(if (pressed) 0.965f else 1f, spring(dampingRatio = 0.6f, stiffness = 500f), label = "rowPress")
     Row(
         modifier
             .fillMaxWidth()
+            .onGloballyPositioned { coords[0] = it }
+            .graphicsLayer {
+                scaleX = press
+                scaleY = press
+            }
+            .pointerInput(ch.id) {
+                detectTapGestures(
+                    onPress = {
+                        pressed = true
+                        tryAwaitRelease()
+                        pressed = false
+                    },
+                    onLongPress = {
+                        val c = coords[0]
+                        if (c != null && c.isAttached) {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onLongPress(c.boundsInRoot())
+                        }
+                    }
+                )
+            }
             .padding(horizontal = 20.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -241,18 +389,20 @@ private fun ChannelRow(ch: Channel, dark: Boolean, textColor: Color, subColor: C
             )
         }
         Spacer(Modifier.width(10.dp))
-        BasicText(
-            formatTime(ch.createdAtMs),
-            style = TextStyle(color = subColor, fontSize = 12.sp)
-        )
+        // how many people are in the channel right now
+        Row(
+            Modifier
+                .clip(RoundedCornerShape(50))
+                .background(subColor.copy(alpha = 0.14f))
+                .padding(horizontal = 10.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            GlyphIcon(R.drawable.ic_people, subColor, 16.dp)
+            Spacer(Modifier.width(5.dp))
+            BasicText(
+                ch.memberCount.toString(),
+                style = TextStyle(color = subColor, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            )
+        }
     }
-}
-
-/** "14:05" for today, "23/11" for older days. */
-private fun formatTime(ms: Long): String {
-    val now = Calendar.getInstance()
-    val then = Calendar.getInstance().apply { timeInMillis = ms }
-    val sameDay = now.get(Calendar.YEAR) == then.get(Calendar.YEAR) &&
-        now.get(Calendar.DAY_OF_YEAR) == then.get(Calendar.DAY_OF_YEAR)
-    return SimpleDateFormat(if (sameDay) "HH:mm" else "d/M", Locale.US).format(Date(ms))
 }

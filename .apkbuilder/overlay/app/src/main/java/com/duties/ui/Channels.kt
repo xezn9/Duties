@@ -34,7 +34,12 @@ class Channel(
     val username: String,
     val bio: String,
     val photo: Bitmap?,
-    val createdAtMs: Long
+    val createdAtMs: Long,
+    val ownerUid: String,
+    /** How many people are in the channel right now (the owner counts). */
+    val memberCount: Int,
+    /** True when the signed-in account owns the channel (it may delete it). */
+    val isOwner: Boolean
 )
 
 /** A person found by the @username search. */
@@ -114,7 +119,19 @@ class ChannelsState(private val uid: String) {
     private fun toChannel(d: DocumentSnapshot): Channel? {
         val name = d.getString("name") ?: return null
         val username = d.getString("username") ?: return null
-        return Channel(d.id, name, username, d.getString("bio") ?: "", photoOf("c" + d.id, d.getString("photo")), timeOf(d))
+        val owner = d.getString("ownerUid") ?: ""
+        val members = (d.get("members") as? List<*>)?.size ?: 0
+        return Channel(
+            id = d.id,
+            name = name,
+            username = username,
+            bio = d.getString("bio") ?: "",
+            photo = photoOf("c" + d.id, d.getString("photo")),
+            createdAtMs = timeOf(d),
+            ownerUid = owner,
+            memberCount = members.coerceAtLeast(1),
+            isOwner = owner == uid
+        )
     }
 
     private fun toInvite(d: DocumentSnapshot): Invite? {
@@ -200,31 +217,168 @@ class ChannelsState(private val uid: String) {
     }
 
     /**
-     * Looks for people whose @username starts with [query] (not me). Needs at least 2 letters.
+     * Deletes the channel for everybody (owner only): the channel, its unique @username and the invitations
+     * that were sent for it. The members' Home lists update by themselves (their listeners see it disappear).
+     */
+    suspend fun deleteChannel(channel: Channel) {
+        val db = FirebaseFirestore.getInstance()
+        // the invitations I sent for this channel (a query cannot run inside a transaction, so it goes first)
+        val invites = db.collection("invites")
+            .whereEqualTo("fromUid", uid)
+            .whereEqualTo("channelId", channel.id)
+            .get()
+            .await()
+        val channelRef = db.collection("channels").document(channel.id)
+        val nameRef = db.collection("channelUsernames").document(channel.username.lowercase())
+        db.runTransaction { tr ->
+            val nameDoc = tr.get(nameRef)
+            for (d in invites.documents) tr.delete(d.reference)
+            if (nameDoc.exists() && nameDoc.getString("uid") == uid) tr.delete(nameRef)
+            tr.delete(channelRef)
+            null
+        }.await()
+    }
+
+    /**
+     * Leaves the channel.
+     *  - a member: just removes himself from "members".
+     *  - the owner, with other people inside: the channel (and its @username) goes to the first other member.
+     *  - the owner, alone: nobody is left to own it, so it is deleted.
+     */
+    suspend fun leaveChannel(channel: Channel) {
+        val db = FirebaseFirestore.getInstance()
+        val channelRef = db.collection("channels").document(channel.id)
+        if (!channel.isOwner) {
+            channelRef.update("members", FieldValue.arrayRemove(uid)).await()
+            return
+        }
+        val nameRef = db.collection("channelUsernames").document(channel.username.lowercase())
+        var deleteInstead = false
+        db.runTransaction { tr ->
+            deleteInstead = false                      // a transaction may run again: start clean
+            val fresh = tr.get(channelRef)
+            val nameDoc = tr.get(nameRef)
+            val list = (fresh.get("members") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+            val next = list.firstOrNull { it != uid }
+            if (next == null) {
+                deleteInstead = true
+            } else {
+                tr.update(channelRef, mapOf("ownerUid" to next, "members" to list.filter { it != uid }))
+                if (nameDoc.exists()) tr.update(nameRef, "uid", next)
+            }
+            null
+        }.await()
+        if (deleteInstead) deleteChannel(channel)
+    }
+
+    // ---------------------------------------------------------------- search for people
+
+    /** (lowercase @username, uid) of the first accounts: used to find names that are SIMILAR, not only the same start. */
+    private var usernamePool: List<Pair<String, String>> = emptyList()
+    private var poolLoadedAtMs = 0L
+
+    private suspend fun loadPool(db: FirebaseFirestore): List<Pair<String, String>> {
+        val now = System.currentTimeMillis()
+        if (usernamePool.isNotEmpty() && now - poolLoadedAtMs < POOL_MAX_AGE_MS) return usernamePool
+        val snap = db.collection("usernames").limit(POOL_SIZE).get().await()
+        usernamePool = snap.documents.mapNotNull { d -> d.getString("uid")?.let { d.id to it } }
+        poolLoadedAtMs = now
+        return usernamePool
+    }
+
+    /**
+     * Looks for people whose @username is the same as, starts with, contains or is SIMILAR to [query]
+     * (a typo or two does not matter), best match first, never me. Needs at least 2 letters.
      * usernames/{lowercase name} = { uid }, then users/{uid} gives the display name.
      */
     suspend fun searchUsers(query: String): List<FoundUser> {
         val q = query.trim().removePrefix("@").lowercase()
         if (q.length < 2) return emptyList()
         val db = FirebaseFirestore.getInstance()
+
+        val names = LinkedHashMap<String, String>()          // lowercase username -> uid
+        // 1) names that start with it (exact, asked from the server)
         val snap = db.collection("usernames")
             .whereGreaterThanOrEqualTo(FieldPath.documentId(), q)
-            .whereLessThanOrEqualTo(FieldPath.documentId(), q + "")
-            .limit(12)
+            .whereLessThanOrEqualTo(FieldPath.documentId(), q + "\uf8ff")
+            .limit(20)
             .get()
             .await()
-        val uids = snap.documents.mapNotNull { it.getString("uid") }.filter { it != uid }.distinct()
+        snap.documents.forEach { d -> d.getString("uid")?.let { names[d.id] = it } }
+        // 2) similar names (checked here on the phone, over a small cached list)
+        try {
+            loadPool(db).forEach { (n, u) -> names.putIfAbsent(n, u) }
+        } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // the prefix result is still good
+        }
+
+        val ranked = names.entries
+            .filter { it.value != uid }
+            .map { it to similarity(q, it.key) }
+            .filter { it.second > 0 }
+            .sortedByDescending { it.second }
+            .take(MAX_RESULTS)
+            .map { it.first.value }
+            .distinct()
+
         return coroutineScope {
-            uids.map { id ->
+            ranked.map { id ->
                 async {
                     val doc = db.collection("users").document(id).get().await()
                     val username = doc.getString("username")
                     if (!doc.exists() || username == null) null
                     else FoundUser(id, doc.getString("name") ?: username, username)
                 }
-            }.mapNotNull { it.await() }
+            }.map { it.await() }.filterNotNull()
         }
     }
+}
+
+private const val POOL_SIZE = 600L
+private const val POOL_MAX_AGE_MS = 5 * 60_000L
+private const val MAX_RESULTS = 15
+
+/** How much [name] looks like what was typed ([q]); 0 = not similar at all. Both are lowercase. */
+private fun similarity(q: String, name: String): Int {
+    if (name == q) return 1000
+    if (name.startsWith(q)) return 900 - (name.length - q.length)
+    val at = name.indexOf(q)
+    if (at >= 0) return 700 - at * 5 - (name.length - q.length)
+    if (q.length >= 3) {
+        // a typo or two: compare with the whole name and with its beginning of the same length
+        val d = minOf(editDistance(q, name), editDistance(q, name.take(q.length)))
+        val allowed = when {
+            q.length <= 4 -> 1
+            q.length <= 7 -> 2
+            else -> 3
+        }
+        if (d <= allowed) return 500 - d * 100
+        // the typed letters appear in the same order inside the name (n-w-y in "noway")
+        var i = 0
+        for (c in name) if (i < q.length && c == q[i]) i++
+        if (i == q.length) return 200
+    }
+    return 0
+}
+
+/** Levenshtein distance (number of letters to add / remove / change). */
+private fun editDistance(a: String, b: String): Int {
+    if (a == b) return 0
+    if (a.isEmpty()) return b.length
+    if (b.isEmpty()) return a.length
+    var prev = IntArray(b.length + 1) { it }
+    var cur = IntArray(b.length + 1)
+    for (i in 1..a.length) {
+        cur[0] = i
+        for (j in 1..b.length) {
+            val cost = if (a[i - 1] == b[j - 1]) 0 else 1
+            cur[j] = minOf(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost)
+        }
+        val t = prev; prev = cur; cur = t
+    }
+    return prev[b.length]
 }
 
 /** 256 px JPEG as base64 text (about 20-40 KB: small enough to live inside a document). */

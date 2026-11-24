@@ -91,6 +91,20 @@ fun MainScreen(dark: Boolean, introDelayMs: Int = 200) {
         if (user != null) channels.start()
         onDispose { channels.stop() }
     }
+    // delete / leave a channel: run here (not inside the Home page) so they finish even if the tab is left meanwhile
+    val channelFailText = stringResource(R.string.error_save)
+    val deleteChannel: (Channel) -> Unit = { ch ->
+        scope.launch {
+            runCatching { channels.deleteChannel(ch) }
+                .onFailure { Toast.makeText(context, channelFailText, Toast.LENGTH_LONG).show() }
+        }
+    }
+    val leaveChannel: (Channel) -> Unit = { ch ->
+        scope.launch {
+            runCatching { channels.leaveChannel(ch) }
+                .onFailure { Toast.makeText(context, channelFailText, Toast.LENGTH_LONG).show() }
+        }
+    }
     // HyperSpring PushMorph: the page below dissolves, the pencil button grows into the edit page and
     // its parts come out of that point. edgeLine = false -> no thin light line around the growing page.
     val push = remember { PushController(scope) }
@@ -121,6 +135,8 @@ fun MainScreen(dark: Boolean, introDelayMs: Int = 200) {
                         onSettings = { from -> push.open("settings", from, circular = true) },
                         onViewImage = { viewImage = it },
                         channels = channels,
+                        onDeleteChannel = deleteChannel,
+                        onLeaveChannel = leaveChannel,
                         rulesFolded = rulesFolded,
                         onRulesFolded = {
                             rulesFolded = it
@@ -184,6 +200,8 @@ private fun TabPage(
     onSettings: (Rect) -> Unit,
     onViewImage: (ViewedImage) -> Unit,
     channels: ChannelsState,
+    onDeleteChannel: (Channel) -> Unit,
+    onLeaveChannel: (Channel) -> Unit,
     rulesFolded: Boolean,
     onRulesFolded: (Boolean) -> Unit
 ) {
@@ -251,6 +269,8 @@ private fun TabPage(
                     cascade = cascade,
                     onAccept = { inv -> scope.launch { runCatching { channels.accept(inv) }.onFailure { failToast() } } },
                     onDecline = { inv -> scope.launch { runCatching { channels.decline(inv) }.onFailure { failToast() } } },
+                    onDeleteChannel = onDeleteChannel,
+                    onLeaveChannel = onLeaveChannel,
                     modifier = Modifier.weight(1f)
                 )
             }

@@ -548,7 +548,8 @@ private fun ChannelWindowContent(
                 backdrop = inner,
                 draft = draft,
                 onSearch = onSearch,
-                onClose = { searching = false }
+                onClose = { searching = false },
+                bottomInset = imeExtra
             )
         }
     }
