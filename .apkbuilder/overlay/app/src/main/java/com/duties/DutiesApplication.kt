@@ -22,6 +22,9 @@ class DutiesApplication : Application() {
         super.onCreate()
         // Realtime Database keeps what it already read on the phone (chats open from it before the server answers)
         runCatching { com.google.firebase.database.FirebaseDatabase.getInstance().setPersistenceEnabled(true) }
+        // the most recent profiles (bio, @username, banner) are read from the phone's disk now, in the background,
+        // so the first tap on a known person opens his profile with everything already there
+        runCatching { com.duties.ui.UserProfiles.warmUp(this) }
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, error ->
             try {

@@ -12,6 +12,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -21,25 +23,36 @@ import kotlin.coroutines.cancellation.CancellationException
 /*
  * UserProfiles.kt — makes the profile of a person (name, @username, bio, photo, banner) show with NO waiting.
  *
- * Before: the data was only asked for AFTER the profile page opened, one request after the other
- * (Firestore, then the photos, then the GIF), so the bio / @username / banner came in late.
+ * What was slow before, and what changed:
  *
- * Now:
- *  1) The profile of everyone who wrote in a chat is loaded in the background as soon as the chat shows
- *     (see ChatScreen.kt) - so it is already in memory when his photo is tapped.
- *  2) It is also saved on the phone (files/user_profiles), so even after restarting the app it shows at once,
- *     then the server's newer data replaces it silently.
- *  3) The three requests (Firestore text, photos + banner, GIF banner) run AT THE SAME TIME, not one after
- *     the other, and each one shows its part the moment it arrives.
+ *  1) A profile that was pushed out of memory (more than 20 people) was still marked "already fetched", so it was
+ *     never loaded again until you tapped it -> the page opened empty and filled in 1-2 seconds later.
+ *     Now "fetched" is forgotten when a profile leaves memory, and a profile is only skipped if it is really in memory.
+ *
+ *  2) Right after the app starts, nothing was in memory. Now the most recent profiles are read from the phone's
+ *     disk in the background at app start (UserProfiles.warmUp, called from DutiesApplication).
+ *
+ *  3) Tapping a photo forced a full re-download of the profile pictures (up to ~1 MB of base64) and then replaced
+ *     the banner bitmap while the page was opening. Now only the tiny profilePics/{uid}/updatedAt value is read;
+ *     the pictures are downloaded only if it changed.
+ *
+ *  4) The avatar and the (big) banner were one single request, so the small avatar waited for the big banner.
+ *     Now avatar, banner and text are three separate requests that run at the same time and show on arrival.
+ *
+ *  5) The GIF banner (up to 16 MB, downloaded piece by piece) used to run at the same time as everything else and
+ *     took the bandwidth of the text/pictures of the other people. Now it starts AFTER the text and pictures of that
+ *     person are done, and at most 3 GIFs download at once.
  */
 
-internal class UserProfileData(
+internal data class UserProfileData(
     val name: String,
     val username: String,
     val bio: String,
     val avatar: Bitmap?,
     val banner: ImageSlot,
-    val gifStamp: Long = 0L
+    val gifStamp: Long = 0L,
+    /** profilePics/{uid}/updatedAt of the pictures we hold; 0 = unknown (then they are downloaded again). */
+    val picsStamp: Long = 0L
 )
 
 internal class BannerGif(val file: File, val tf: CropTransform, val stamp: Long)
@@ -57,9 +70,11 @@ internal object UserProfiles {
 
     private val lock = Any()
     private val inFlight = HashSet<String>()
+    private val gifBusy = HashSet<String>()
     private val fetched = HashSet<String>()
     private val order = ArrayList<String>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val gifGate = Semaphore(3)
 
     private fun safe(uid: String) = uid.filter { it.isLetterOrDigit() || it == '_' || it == '-' }
     private fun dir(app: Context) = File(app.filesDir, "user_profiles").apply { mkdirs() }
@@ -74,13 +89,17 @@ internal object UserProfiles {
 
     private fun update(uid: String, change: (UserProfileData) -> UserProfileData) {
         synchronized(lock) {
-            map[uid] = change(map[uid] ?: EMPTY)
+            val cur = map[uid]
+            val next = change(cur ?: EMPTY)
+            if (cur == null && next === EMPTY) return      // nothing to store (e.g. the profile was pushed out meanwhile)
+            map[uid] = next
             order.remove(uid)
             order.add(uid)
             while (order.size > MAX_IN_MEMORY) {
                 val victim = order.firstOrNull { it != pinned } ?: break
                 order.remove(victim)
                 map.remove(victim)
+                fetched.remove(victim)                     // it must be loaded again next time it is needed
             }
         }
     }
@@ -88,14 +107,14 @@ internal object UserProfiles {
     /**
      * Gets the profile of [uid]: the copy saved on the phone shows first, then the server's one.
      * [force] = ask the server again even if it was already asked in this session (used when a profile opens,
-     * so a changed bio shows up). Without it, each person is asked once per app start.
+     * so a changed bio shows up). Without it, each person is asked once per app start (as long as he stays in memory).
      */
     fun request(context: Context, uid: String, force: Boolean = false) {
         if (uid.isBlank()) return
         val app = context.applicationContext
         synchronized(lock) {
             if (uid in inFlight) return
-            if (!force && uid in fetched) return
+            if (!force && uid in fetched && map.containsKey(uid)) return
             inFlight.add(uid)
         }
         scope.launch {
@@ -108,6 +127,27 @@ internal object UserProfiles {
                     inFlight.remove(uid)
                     if (ok) fetched.add(uid)
                 }
+            }
+        }
+    }
+
+    /**
+     * Reads the most recently saved profiles from the phone into memory (no network). Called once at app start,
+     * so the first tap on a known person is instant even before the chat has loaded.
+     */
+    fun warmUp(context: Context, limit: Int = 8) {
+        val app = context.applicationContext
+        scope.launch {
+            try {
+                val files = dir(app).listFiles { f -> f.name.endsWith(".json") } ?: return@launch
+                files.sortedByDescending { it.lastModified() }
+                    .take(limit)
+                    .forEach { f ->
+                        val uid = f.name.removeSuffix(".json")
+                        if (!map.containsKey(uid)) loadDisk(app, uid)
+                    }
+            } catch (_: Exception) {
+                // only a speed-up
             }
         }
     }
@@ -137,9 +177,14 @@ internal object UserProfiles {
                 gifFile != null -> ImageSlot(bn, null, tf, gifFile)
                 else -> ImageSlot(bn, null, null)
             }
+            // the pictures stamp is only trusted if the pictures are really on the disk too
+            val picsStamp = if (av != null || bn != null) o.optLong("picsStamp", 0L) else 0L
             if (map.containsKey(uid)) return      // the server already answered
             update(uid) {
-                UserProfileData(o.optString("name"), o.optString("username"), o.optString("bio"), av, banner, if (gifFile != null) stamp else 0L)
+                UserProfileData(
+                    o.optString("name"), o.optString("username"), o.optString("bio"), av, banner,
+                    if (gifFile != null) stamp else 0L, picsStamp
+                )
             }
         } catch (_: Exception) {
             // the copy is only a speed-up
@@ -151,7 +196,7 @@ internal object UserProfiles {
         try {
             val o = JSONObject()
                 .put("name", p.name).put("username", p.username).put("bio", p.bio)
-                .put("gifStamp", p.gifStamp)
+                .put("gifStamp", p.gifStamp).put("picsStamp", p.picsStamp)
             p.banner.tf?.let { o.put("gifZoom", it.zoom.toDouble()).put("gifOx", it.ox.toDouble()).put("gifOy", it.oy.toDouble()) }
             val f = File(dir(app), safe(uid) + ".json")
             val tmp = File(f.parentFile, f.name + ".tmp")
@@ -169,68 +214,109 @@ internal object UserProfiles {
         }
     }
 
-    // ------------------------------------------------------------------ the server (all at the same time)
+    // ------------------------------------------------------------------ the server
 
+    /** Text + pictures at the same time; the GIF banner starts afterwards on its own (it can be big). */
     private suspend fun fetch(app: Context, uid: String): Boolean = supervisorScope {
-        // 1) name, @username, bio (Firestore users/{uid})
-        val textJob = async {
-            attempt {
-                val doc = FirebaseFirestore.getInstance().collection("users").document(uid).get().await()
-                if (doc.exists()) {
-                    val raw = doc.getString("photo")
-                    val small = if (raw.isNullOrEmpty()) null else decodeUserPhoto(raw)
-                    val name = doc.getString("name")
-                    val username = doc.getString("username") ?: ""
-                    val bio = doc.getString("bio") ?: ""
-                    update(uid) {
-                        UserProfileData(name?.ifBlank { null } ?: it.name, username, bio, it.avatar ?: small, it.banner, it.gifStamp)
-                    }
-                    saveText(app, uid)
-                }
-                Unit
-            }
-        }
-        // 2) the full photo and the still banner (Realtime Database profilePics/{uid})
-        val picsJob = async {
-            attempt {
-                val pics = FirebaseDatabase.getInstance().getReference("profilePics").child(uid).get().await()
-                val avRaw = pics.child("avatar").getValue(String::class.java)
-                val bnRaw = pics.child("banner").getValue(String::class.java)
-                val av = avRaw?.let { withContext(Dispatchers.Default) { decodeUserPhoto(it) } }
-                val bn = bnRaw?.let { withContext(Dispatchers.Default) { decodeUserPhoto(it) } }
-                update(uid) { cur ->
-                    // the GIF of the saved copy stays until the server's GIF answer comes
-                    val keepGif = bn != null && cur.banner.gif != null
-                    UserProfileData(
-                        cur.name, cur.username, cur.bio, av ?: cur.avatar,
-                        if (bn == null) ImageSlot.Empty
-                        else ImageSlot(bn, null, if (keepGif) cur.banner.tf else null, if (keepGif) cur.banner.gif else null),
-                        if (keepGif) cur.gifStamp else 0L
-                    )
-                }
-                saveRaw(app, uid, "avatar", avRaw)
-                saveRaw(app, uid, "banner", bnRaw)
-                saveText(app, uid)
-                bn != null
-            }
-        }
-        // 3) the GIF banner (starts now too, shows when it has been downloaded)
-        val gifJob = async { attempt { loadBannerGif(app, uid) } }
-
+        val textJob = async { attempt { fetchText(app, uid) } }
+        val picsJob = async { attempt { fetchPics(app, uid) } }
         val text = textJob.await()
         val pics = picsJob.await()
-        val gif = gifJob.await()
+        scope.launch { fetchGif(app, uid) }
+        text.isSuccess && pics.isSuccess
+    }
 
-        if (pics.getOrNull() == true && gif.isSuccess) {
-            val g = gif.getOrNull()
-            update(uid) { cur ->
-                val still = cur.banner.cropped
-                if (still == null) cur
-                else UserProfileData(cur.name, cur.username, cur.bio, cur.avatar, ImageSlot(still, null, g?.tf, g?.file), g?.stamp ?: 0L)
-            }
-            saveText(app, uid)
+    /** name, @username, bio (Firestore users/{uid}) */
+    private suspend fun fetchText(app: Context, uid: String) {
+        val doc = FirebaseFirestore.getInstance().collection("users").document(uid).get().await()
+        if (!doc.exists()) return
+        val raw = doc.getString("photo")
+        val small = if (raw.isNullOrEmpty()) null else withContext(Dispatchers.Default) { decodeUserPhoto(raw) }
+        val name = doc.getString("name")
+        val username = doc.getString("username") ?: ""
+        val bio = doc.getString("bio") ?: ""
+        update(uid) {
+            it.copy(
+                name = name?.ifBlank { null } ?: it.name,
+                username = username,
+                bio = bio,
+                avatar = it.avatar ?: small
+            )
         }
-        text.isSuccess && pics.isSuccess && gif.isSuccess
+        saveText(app, uid)
+    }
+
+    /**
+     * The full photo and the still banner (Realtime Database profilePics/{uid}).
+     * If we already hold pictures, only the tiny updatedAt value is read: same value = nothing to download.
+     * Otherwise avatar and banner are two separate requests, so the small avatar never waits for the big banner.
+     */
+    private suspend fun fetchPics(app: Context, uid: String) {
+        supervisorScope {
+            val ref = FirebaseDatabase.getInstance().getReference("profilePics").child(uid)
+            suspend fun stampOnServer(): Long = (ref.child("updatedAt").get().await().value as? Number)?.toLong() ?: 0L
+
+            val have = map[uid]
+            if (have != null && have.picsStamp != 0L && stampOnServer() == have.picsStamp) {
+                return@supervisorScope      // unchanged: what is on the screen is already right
+            }
+
+            val stampJob = async { attempt { stampOnServer() } }
+            val avJob = async {
+                attempt {
+                    val raw = ref.child("avatar").get().await().getValue(String::class.java)
+                    val bmp = raw?.let { withContext(Dispatchers.Default) { decodeUserPhoto(it) } }
+                    update(uid) { it.copy(avatar = bmp ?: it.avatar) }
+                    saveRaw(app, uid, "avatar", raw)
+                    saveText(app, uid)
+                }
+            }
+            val bnJob = async {
+                attempt {
+                    val raw = ref.child("banner").get().await().getValue(String::class.java)
+                    val bmp = raw?.let { withContext(Dispatchers.Default) { decodeUserPhoto(it) } }
+                    update(uid) { cur ->
+                        // the GIF of the saved copy stays until the server's GIF answer comes
+                        val keepGif = bmp != null && cur.banner.gif != null
+                        cur.copy(
+                            banner = if (bmp == null) ImageSlot.Empty
+                            else ImageSlot(bmp, null, if (keepGif) cur.banner.tf else null, if (keepGif) cur.banner.gif else null),
+                            gifStamp = if (keepGif) cur.gifStamp else 0L
+                        )
+                    }
+                    saveRaw(app, uid, "banner", raw)
+                    saveText(app, uid)
+                }
+            }
+            val st = stampJob.await()
+            val av = avJob.await()
+            val bn = bnJob.await()
+            av.getOrThrow()
+            bn.getOrThrow()
+            // remember the stamp only when both pictures really arrived
+            update(uid) { it.copy(picsStamp = st.getOrNull() ?: 0L) }
+            saveText(app, uid)
+            Unit
+        }
+    }
+
+    /** The GIF banner: after the text and pictures, at most 3 at a time, one download per person. */
+    private suspend fun fetchGif(app: Context, uid: String) {
+        synchronized(lock) { if (!gifBusy.add(uid)) return }
+        try {
+            val r = gifGate.withPermit { attempt { loadBannerGif(app, uid) } }
+            if (r.isSuccess) {
+                val g = r.getOrNull()
+                update(uid) { cur ->
+                    val still = cur.banner.cropped
+                    if (still == null) cur
+                    else cur.copy(banner = ImageSlot(still, null, g?.tf, g?.file), gifStamp = g?.stamp ?: 0L)
+                }
+                saveText(app, uid)
+            }
+        } finally {
+            synchronized(lock) { gifBusy.remove(uid) }
+        }
     }
 }
 
