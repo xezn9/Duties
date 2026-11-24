@@ -112,9 +112,9 @@ import kotlin.math.roundToInt
 /** The channel that was tapped, where its row is (root coordinates) and a way to ask where the row is now. */
 internal class ChatTarget(val channel: Channel, val from: Rect, val currentBounds: () -> Rect?)
 
-private const val OPEN_MS = 620
+private const val OPEN_MS = 950
 private const val CLOSE_MS = 480
-private val OPEN_EASE = CubicBezierEasing(0.25f, 0.85f, 0.25f, 1f)
+private val OPEN_EASE = CubicBezierEasing(0.4f, 0f, 0.2f, 1f)
 private val CLOSE_EASE = CubicBezierEasing(0.32f, 0.72f, 0f, 1f)
 
 private val HDR_AVATAR = 40.dp
@@ -352,7 +352,7 @@ private fun ChatContent(
                     MessageBubble(
                         m = m,
                         mine = m.uid == uid,
-                        showName = !olderSame && m.uid != uid,
+                        showName = false,                       // the sender's name is not shown (only his photo)
                         topGap = !olderSame,
                         showAvatar = !newerSame,
                         myPhoto = myPhoto,
