@@ -33,6 +33,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -91,56 +92,7 @@ import kotlin.math.roundToInt
 /** The person that was tapped, and where his photo is (root coordinates). */
 internal class ProfileTarget(val uid: String, val name: String, val photo: Bitmap?, val from: Rect)
 
-private class UserPics(val avatar: Bitmap?, val banner: ImageSlot)
-
-/** Pictures already downloaded in this session (opening the same profile again is instant). */
-private object UserPicsCache {
-    val map = HashMap<String, UserPics>()
-}
-
-/**
- * The banner GIF of [uid] from bannerGifs/{uid} (see Profile.kt), downloaded into the cache folder (kept until the
- * person changes it). Returns the file and the position the owner chose, or null if there is none.
- */
-private suspend fun loadBannerGif(context: Context, uid: String): Pair<File, CropTransform>? {
-    val ref = FirebaseDatabase.getInstance().getReference("bannerGifs").child(uid)
-    val meta = ref.child("meta").get().await()
-    if (!meta.exists()) return null
-    val chunks = (meta.child("chunks").value as? Number)?.toInt() ?: return null
-    val stamp = (meta.child("updatedAt").value as? Number)?.toLong() ?: 0L
-    val tf = CropTransform(
-        (meta.child("zoom").value as? Number)?.toFloat() ?: 1f,
-        (meta.child("ox").value as? Number)?.toFloat() ?: 0f,
-        (meta.child("oy").value as? Number)?.toFloat() ?: 0f
-    )
-    val safe = uid.filter { it.isLetterOrDigit() || it == '_' || it == '-' }
-    val dir = File(context.cacheDir, "user_banners").apply { mkdirs() }
-    val file = File(dir, "${safe}_$stamp.gif")
-    if (!file.exists()) {
-        withContext(Dispatchers.IO) {
-            dir.listFiles()?.forEach { if (it.name.startsWith(safe + "_")) it.delete() }   // the old ones of this person
-        }
-        val part = File(dir, "${safe}_$stamp.part")
-        try {
-            withContext(Dispatchers.IO) {
-                part.outputStream().buffered().use { out ->
-                    for (i in 0 until chunks) {
-                        val text = ref.child("data").child(i.toString()).get().await().getValue(String::class.java)
-                            ?: throw IllegalStateException("missing piece $i")
-                        out.write(Base64.decode(text, Base64.NO_WRAP))
-                    }
-                }
-                part.renameTo(file)
-            }
-        } catch (e: Exception) {
-            part.delete()
-            throw e
-        }
-    }
-    return Pair(file, tf)
-}
-
-private class UserInfo(val name: String, val username: String, val bio: String, val photo: Bitmap?)
+private class UserInfoView(val name: String, val username: String, val bio: String, val photo: Bitmap?)
 
 private val PHOTO_START = 34.dp   // the photo beside a message (MSG_AVATAR in ChatScreen.kt)
 
@@ -244,50 +196,21 @@ private fun ProfileContent(
     reveal: () -> Float,
     onBack: () -> Unit
 ) {
-    // name / username / bio / photo from the server; what the chat already knows shows until they arrive
+    // name / username / bio / photo / banner come from UserProfiles: already in memory (loaded when the chat showed,
+    // or saved on the phone), so they are in the very first frame. The server's newer data replaces them silently.
     val context = LocalContext.current.applicationContext
-    var info by remember(target.uid) { mutableStateOf(UserInfo(target.name, "", "", target.photo)) }
-    var banner by remember(target.uid) { mutableStateOf(ImageSlot.Empty) }
-    LaunchedEffect(target.uid) {
-        // seen before in this session: shows at once
-        UserPicsCache.map[target.uid]?.let { c ->
-            info = UserInfo(info.name, info.username, info.bio, c.avatar ?: info.photo)
-            banner = c.banner
-        }
-        try {
-            // 1) name, @username, bio (Firestore users/{uid})
-            val doc = FirebaseFirestore.getInstance().collection("users").document(target.uid).get().await()
-            if (doc.exists()) {
-                val raw = doc.getString("photo")
-                val small = if (raw.isNullOrEmpty()) null
-                else withContext(Dispatchers.Default) { decodeUserPhoto(raw) }
-                info = UserInfo(
-                    name = doc.getString("name")?.ifBlank { null } ?: target.name,
-                    username = doc.getString("username") ?: "",
-                    bio = doc.getString("bio") ?: "",
-                    photo = info.photo ?: small
-                )
-            }
-            // 2) the full photo and the banner (Realtime Database profilePics/{uid})
-            val pics = FirebaseDatabase.getInstance().getReference("profilePics").child(target.uid).get().await()
-            val av = pics.child("avatar").getValue(String::class.java)
-                ?.let { t -> withContext(Dispatchers.Default) { decodeUserPhoto(t) } }
-            val bn = pics.child("banner").getValue(String::class.java)
-                ?.let { t -> withContext(Dispatchers.Default) { decodeUserPhoto(t) } }
-            if (av != null) info = UserInfo(info.name, info.username, info.bio, av)
-            banner = if (bn != null) ImageSlot(bn, null, null) else ImageSlot.Empty
-            UserPicsCache.map[target.uid] = UserPics(av, banner)
-            // 3) a GIF banner: the still one shows first, the GIF replaces it when it has been downloaded
-            val gif = loadBannerGif(context, target.uid)
-            if (gif != null && bn != null) {
-                banner = ImageSlot(bn, null, gif.second, gif.first)
-                UserPicsCache.map[target.uid] = UserPics(av, banner)
-            }
-        } catch (e: kotlin.coroutines.cancellation.CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            // offline: the name and photo from the chat stay
-        }
+    val data = UserProfiles.map[target.uid]
+    val info = UserInfoView(
+        name = data?.name?.ifBlank { null } ?: target.name,
+        username = data?.username ?: "",
+        bio = data?.bio ?: "",
+        photo = data?.avatar ?: target.photo
+    )
+    val banner = data?.banner ?: ImageSlot.Empty
+    LaunchedEffect(target.uid) { UserProfiles.request(context, target.uid, force = true) }
+    DisposableEffect(target.uid) {
+        UserProfiles.pinned = target.uid
+        onDispose { if (UserProfiles.pinned == target.uid) UserProfiles.pinned = null }
     }
 
     val backdrop = rememberLayerBackdrop()

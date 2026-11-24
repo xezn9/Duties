@@ -328,6 +328,8 @@ private fun ChatContent(
             ChatBackground(dark, Modifier.fillMaxSize())
             val listState = rememberLazyListState()
             val msgs = chat.messages
+            // the profile (bio, @username, banner) of everyone in this chat loads now, so it is ready when a photo is tapped
+            LaunchedEffect(msgs.size) { msgs.map { it.uid }.distinct().forEach { UserProfiles.request(context, it) } }
             val reversed = remember(msgs) { msgs.asReversed() }
             val last = msgs.lastOrNull()
             // messages that were there when the chat opened do not animate; the ones that arrive later do
@@ -560,7 +562,10 @@ private fun MessageBubble(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    LaunchedEffect(m.uid) { UserPhotos.request(context, m.uid) }
+    LaunchedEffect(m.uid) {
+        UserPhotos.request(context, m.uid)
+        UserProfiles.request(context, m.uid)
+    }
     val photo = (if (mine) myPhoto else null) ?: UserPhotos.photos[m.uid]
     // tap on the sender's photo = open his profile (it grows out of the photo)
     val openProfile: (Rect) -> Unit = { r ->
