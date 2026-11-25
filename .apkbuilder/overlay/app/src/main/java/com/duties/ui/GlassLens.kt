@@ -11,14 +11,14 @@ import com.kyant.shapes.RoundedRectangularShape
 
 /**
  * Same as the library's `lens(...)`, but the rainbow (chromatic aberration) at the edge of the glass is a
- * NUMBER and not just on/off:
+ * NUMBER, and it is drawn as a soft continuous spectrum all around the rim (like a real glass lens) instead
+ * of the library's 7 hard bands that only show in the corners:
  *
  *  - [chromaticAberration] = 0   -> exactly the library lens (no rainbow, cheapest).
- *  - [chromaticAberration] = 1   -> the rainbow the library draws when `chromaticAberration = true`.
- *  - bigger than 1               -> a wider rainbow.
+ *  - [chromaticAberration] = 1   -> a clear pastel rainbow smear along the whole edge.
+ *  - bigger than 1               -> a wider smear.
  *
- * The shader below is the library's dispersion shader (backdrop 2.0.1, Apache 2.0); the only difference is
- * that the strength uniform is given by us instead of the fixed 1.0.
+ * The edge bending is the library's (backdrop 2.0.1, Apache 2.0); only the color splitting is ours.
  */
 fun BackdropEffectScope.glassLens(
     refractionHeight: Float,
@@ -143,43 +143,26 @@ half4 main(float2 coord) {
     float2 grad = normalize(gradSdRoundedRect(centeredCoord, halfSize, gradRadius) + depthEffect * normalize(centeredCoord));
 
     float2 refractedCoord = coord + d * grad;
-    float dispersionIntensity = chromaticAberration * ((centeredCoord.x * centeredCoord.y) / (halfSize.x * halfSize.y));
-    float2 dispersedCoord = d * grad * dispersionIntensity;
 
-    half4 color = half4(0.0);
+    // the colors are spread along the direction the edge bends the light (outwards / inwards),
+    // the same way on the whole rim, 12 samples from red to blue so it is a smooth spectrum
+    float2 spread = d * grad * chromaticAberration * 1.5;
 
-    half4 red = content.eval(refractedCoord + dispersedCoord);
-    color.r += red.r / 3.5;
-    color.a += red.a / 7.0;
-
-    half4 orange = content.eval(refractedCoord + dispersedCoord * (2.0 / 3.0));
-    color.r += orange.r / 3.5;
-    color.g += orange.g / 7.0;
-    color.a += orange.a / 7.0;
-
-    half4 yellow = content.eval(refractedCoord + dispersedCoord * (1.0 / 3.0));
-    color.r += yellow.r / 3.5;
-    color.g += yellow.g / 3.5;
-    color.a += yellow.a / 7.0;
-
-    half4 green = content.eval(refractedCoord);
-    color.g += green.g / 3.5;
-    color.a += green.a / 7.0;
-
-    half4 cyan = content.eval(refractedCoord - dispersedCoord * (1.0 / 3.0));
-    color.g += cyan.g / 3.5;
-    color.b += cyan.b / 3.0;
-    color.a += cyan.a / 7.0;
-
-    half4 blue = content.eval(refractedCoord - dispersedCoord * (2.0 / 3.0));
-    color.b += blue.b / 3.0;
-    color.a += blue.a / 7.0;
-
-    half4 purple = content.eval(refractedCoord - dispersedCoord);
-    color.r += purple.r / 7.0;
-    color.b += purple.b / 3.0;
-    color.a += purple.a / 7.0;
-
-    return color;
+    float3 acc = float3(0.0);
+    float3 wsum = float3(0.0);
+    float alpha = 0.0;
+    for (int i = 0; i < 12; i++) {
+        float t = float(i) / 11.0;
+        float3 w = max(float3(
+            1.0 - abs(t) / 0.65,
+            1.0 - abs(t - 0.5) / 0.65,
+            1.0 - abs(t - 1.0) / 0.65
+        ), float3(0.0));
+        half4 s = content.eval(refractedCoord + spread * ((t - 0.5) * 2.0));
+        acc += float3(s.rgb) * w;
+        wsum += w;
+        alpha += float(s.a);
+    }
+    return half4(half3(acc / wsum), half(alpha / 12.0));
 }
 """
