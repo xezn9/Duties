@@ -448,7 +448,8 @@ class ChannelsState(private val uid: String) {
                             .map { it.first.value }
                             .distinct()
                         best.map { id ->
-                            async { toChannel(db.collection("channels").document(id).get().await()) }
+                            // one channel that cannot be read must not break the whole search
+                            async { runCatching { toChannel(db.collection("channels").document(id).get().await()) }.getOrNull() }
                         }.awaitAll().filterNotNull()
                     }
                 }
