@@ -5,6 +5,7 @@ import android.widget.Toast
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -33,6 +34,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
@@ -296,6 +298,8 @@ private fun TabPage(
     // black dotted background; its dots light up under the finger, drift and ripple when the page opens
     val dots = rememberDotsState()
     DotsEntranceWave(dots, delayMs = cascade.base, from = waveFrom)
+    // scroll state of the Create form (null while the form is closed): the title rises together with it
+    var formScroll by remember { mutableStateOf<ScrollState?>(null) }
     Box(Modifier.fillMaxSize().dotsTouch(dots)) {
         Box(Modifier.fillMaxSize().layerBackdrop(glassBackdrop)) {
             DotBackground(dots, dark)
@@ -311,7 +315,18 @@ private fun TabPage(
                 delayMs = remember { cascade.take() },
                 color = textColor,
                 fontSize = 40.sp,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).zIndex(1f)   // above the Create form that scrolls up behind it
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp)
+                    .zIndex(1f)
+                    .graphicsLayer {
+                        // part of the form: it goes up with it (1:1) and melts away like the rest of the form does
+                        val s = (formScroll?.value ?: 0).toFloat()
+                        translationY = -s
+                        val k = (s / 90.dp.toPx()).coerceIn(0f, 1f)
+                        alpha = 1f - k
+                        renderEffect = blurEffect(12.dp.toPx() * k)
+                    }
             )
             // Create = the swipeable pages that explain how to create a channel (continues the tab's cascade).
             if (index == 1) {
@@ -323,6 +338,7 @@ private fun TabPage(
                     modifier = Modifier.weight(1f),
                     startCollapsed = rulesFolded,
                     onCollapsedChange = onRulesFolded,
+                    onFormScroll = { formScroll = it },
                     onSearchUsers = { q -> channels.searchUsers(q) },
                     onSubmitChannel = { name, username, bio, photo, invitees ->
                         channels.create(name, username, bio, photo, invitees, profile.name, profile.username)

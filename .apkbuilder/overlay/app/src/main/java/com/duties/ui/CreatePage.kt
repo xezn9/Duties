@@ -14,6 +14,7 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -185,7 +186,8 @@ fun CreatePage(
     startCollapsed: Boolean = false,
     onCollapsedChange: (Boolean) -> Unit = {},
     onSearchUsers: suspend (String) -> List<FoundUser> = { emptyList() },
-    onSubmitChannel: suspend (name: String, username: String, bio: String, photo: Bitmap?, invitees: List<FoundUser>) -> Unit = { _, _, _, _, _ -> }
+    onSubmitChannel: suspend (name: String, username: String, bio: String, photo: Bitmap?, invitees: List<FoundUser>) -> Unit = { _, _, _, _, _ -> },
+    onFormScroll: (ScrollState?) -> Unit = {}
 ) {
     // all the text here is Arabic, like the other detail screens
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
@@ -360,6 +362,7 @@ fun CreatePage(
                 backdrop = backdrop,
                 draft = draft,
                 topExtraPx = screenTop,
+                onScrollState = onFormScroll,
                 onClose = ::closeWindow,
                 onSearch = onSearchUsers,
                 onSubmit = { name, username, bio, photo, invitees ->

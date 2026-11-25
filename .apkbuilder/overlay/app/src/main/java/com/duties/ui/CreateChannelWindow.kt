@@ -45,6 +45,7 @@ import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.CornerSize
@@ -52,6 +53,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -105,6 +107,8 @@ import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
+import com.kyant.backdrop.highlight.Highlight
+import com.kyant.backdrop.shadow.Shadow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.PI
@@ -204,7 +208,8 @@ internal fun CreateChannelForm(
     topExtraPx: Int,
     onClose: () -> Unit,
     onSearch: suspend (String) -> List<FoundUser>,
-    onSubmit: suspend (name: String, username: String, bio: String, photo: Bitmap?, invitees: List<FoundUser>) -> Unit
+    onSubmit: suspend (name: String, username: String, bio: String, photo: Bitmap?, invitees: List<FoundUser>) -> Unit,
+    onScrollState: (ScrollState?) -> Unit = {}
 ) {
     val show by remember { derivedStateOf { p() > 0.0005f } }
     if (!show) return
@@ -217,7 +222,8 @@ internal fun CreateChannelForm(
         draft = draft,
         onClose = onClose,
         onSearch = onSearch,
-        onSubmit = onSubmit
+        onSubmit = onSubmit,
+        onScrollState = onScrollState
     )
 }
 
@@ -233,7 +239,8 @@ private fun FormContent(
     draft: ChannelDraft,
     onClose: () -> Unit,
     onSearch: suspend (String) -> List<FoundUser>,
-    onSubmit: suspend (name: String, username: String, bio: String, photo: Bitmap?, invitees: List<FoundUser>) -> Unit
+    onSubmit: suspend (name: String, username: String, bio: String, photo: Bitmap?, invitees: List<FoundUser>) -> Unit,
+    onScrollState: (ScrollState?) -> Unit
 ) {
     val fg = if (dark) Color.White else Color(0xFF101114)
     val context = LocalContext.current
@@ -294,6 +301,11 @@ private fun FormContent(
     val keyboard = imeDp > 0.dp
 
     val scroll = rememberScrollState()
+    // the "Create" title (it lives in MainScreen) rises together with the form: it reads this scroll state while drawing
+    DisposableEffect(scroll) {
+        onScrollState(scroll)
+        onDispose { onScrollState(null) }
+    }
     val fog = rememberLayerBackdrop()            // the raw content of the form: the blurred "fog" bands refract it
     // The form reaches the very top of the screen (over the status bar and the "Create" title): the content scrolls up
     // there and melts away in a long fog that starts at the top edge of the screen.
@@ -577,6 +589,12 @@ private fun FogBand(
     Box(
         modifier
             .fillMaxWidth()
+            // the strip is a little wider than the screen: its sides are outside of the screen, so no thin line can show there
+            .layout { measurable, constraints ->
+                val extra = 8.dp.roundToPx()
+                val placeable = measurable.measure(Constraints.fixed(constraints.maxWidth + 2 * extra, constraints.maxHeight))
+                layout(constraints.maxWidth, constraints.maxHeight) { placeable.place(-extra, 0) }
+            }
             .graphicsLayer {
                 compositingStrategy = CompositingStrategy.Offscreen
                 this.alpha = strength()
@@ -588,7 +606,11 @@ private fun FogBand(
             .drawBackdrop(
                 backdrop = backdrop,
                 shape = { RectangleShape },
-                effects = { blur(blurRadius.toPx()) }
+                effects = { blur(blurRadius.toPx()) },
+                // the default glass rim (a thin white line along the edges of the shape) is what showed at the left and right
+                // edges of the screen while the form was scrolled: this strip is only fog, so no rim and no shadow
+                highlight = { Highlight.Default.copy(alpha = 0f) },
+                shadow = { Shadow(alpha = 0f) }
             )
     )
 }
