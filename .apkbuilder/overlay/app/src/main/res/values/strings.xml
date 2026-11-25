@@ -52,6 +52,8 @@
     <string name="glass_blur_hint">تغبيش اللي ورا الزجاج</string>
     <string name="glass_refraction">الانكسار</string>
     <string name="glass_refraction_hint">انحناء الحواف مثل العدسة</string>
+    <string name="glass_dispersion">تقزّح الألوان</string>
+    <string name="glass_dispersion_hint">ألوان قوس قزح على حافة الانكسار</string>
     <string name="logout">تسجيل خروج</string>
     <string name="logout_title">تسجيل الخروج</string>
     <string name="logout_message">متأكد تريد تسجّل خروج من حسابك؟</string>

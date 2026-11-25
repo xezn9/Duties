@@ -74,6 +74,19 @@ internal object ChatRooms {
         }
     }
 
+    /**
+     * Repair for a person that is in the channel (Firestore) but not in its room yet (a public channel that was joined
+     * before the room had its "public" flag, or the rules were not published yet): he tries to add himself.
+     * It only works when the room allows it (public room, or an invitation); [onDone] gets the answer.
+     */
+    fun addSelf(channelId: String, uid: String, onDone: (Boolean) -> Unit) {
+        runCatching {
+            room(channelId).child("members").child(uid).setValue(true)
+                .addOnSuccessListener { onDone(true) }
+                .addOnFailureListener { onDone(false) }
+        }.onFailure { onDone(false) }
+    }
+
     /** I leave. If I was the owner, the room goes to [newOwner] (the same person the channel goes to). */
     fun leave(channelId: String, uid: String, newOwner: String?) {
         runCatching {
@@ -134,6 +147,7 @@ class ChatState(
 
     private var query: Query? = null
     private var listener: ValueEventListener? = null
+    private var healed = false
 
     fun start() {
         if (listener != null) return
@@ -157,6 +171,14 @@ class ChatState(
             }
 
             override fun onCancelled(error: DatabaseError) {
+                // not in the room yet? add myself once and listen again
+                if (!healed) {
+                    healed = true
+                    val self = this
+                    ChatRooms.addSelf(channelId, uid) { ok ->
+                        if (ok && listener === self) q.addValueEventListener(self)
+                    }
+                }
                 // with saved messages on the screen the chat is still usable: no error text over them
                 failed = messages.isEmpty()
                 loaded = true
@@ -184,15 +206,23 @@ class ChatState(
         val t = text.trim().take(MAX_TEXT)
         if (t.isEmpty()) return false
         val name = senderName().trim().take(24).ifBlank { "?" }
-        val ref = FirebaseDatabase.getInstance().getReference("chats").child(channelId).child("messages").push()
-        ref.setValue(
-            mapOf(
-                "uid" to uid,
-                "name" to name,
-                "text" to t,
-                "createdAt" to ServerValue.TIMESTAMP
-            )
-        ).addOnFailureListener { onFailed() }
+        fun push(retry: Boolean) {
+            val ref = FirebaseDatabase.getInstance().getReference("chats").child(channelId).child("messages").push()
+            ref.setValue(
+                mapOf(
+                    "uid" to uid,
+                    "name" to name,
+                    "text" to t,
+                    "createdAt" to ServerValue.TIMESTAMP
+                )
+            ).addOnFailureListener {
+                if (retry) {
+                    // maybe I am not in the room yet: add myself, then try once more
+                    ChatRooms.addSelf(channelId, uid) { ok -> if (ok) push(false) else onFailed() }
+                } else onFailed()
+            }
+        }
+        push(true)
         return true
     }
 
