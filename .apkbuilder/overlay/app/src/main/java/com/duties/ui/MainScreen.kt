@@ -12,6 +12,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.absolutePadding
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -44,6 +45,8 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
@@ -384,23 +387,22 @@ private fun TabPage(
                 }
             }
         }
-        // Home: the liquid glass search button, on the right of the title
+        // Home: the liquid glass search button, always on the RIGHT of the screen (the title is on the left).
+        // On a phone in Arabic the layout is mirrored, so "end" would be the left: the side is chosen by hand.
         if (index == 0) {
-            Reveal(
+            val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+            HomeSearchButton(
+                open = searching,
+                dark = dark,
+                backdrop = glassBackdrop,
+                onClick = { searching = !searching },
                 delayMs = cascade.base + 120,
-                dy = 14.dp,
                 modifier = Modifier
-                    .align(Alignment.TopEnd)
+                    .align(if (rtl) Alignment.TopStart else Alignment.TopEnd)
                     .statusBarsPadding()
-                    .padding(top = 24.dp, end = 20.dp)
-            ) {
-                HomeSearchButton(
-                    open = searching,
-                    dark = dark,
-                    backdrop = glassBackdrop,
-                    onClick = { searching = !searching }
-                )
-            }
+                    .padding(top = 24.dp)
+                    .absolutePadding(right = 20.dp)
+            )
         }
     }
 }

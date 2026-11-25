@@ -1,7 +1,8 @@
 package com.duties.ui
 
-import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -42,6 +43,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
@@ -68,28 +70,66 @@ import kotlinx.coroutines.delay
  *                      while it is open. The results are only SHOWN for now: tapping one does nothing yet.
  */
 
-/** Round liquid glass button (same glass as the other buttons of the app). */
+/**
+ * Round liquid glass button (same glass as the other buttons of the app).
+ * Animation: it pops in with a spring (small -> a little too big -> settled) while it turns a quarter, and when the
+ * search opens the magnifier turns and shrinks away while a X turns in from the other side (and back when it closes).
+ */
 @Composable
 internal fun HomeSearchButton(
     open: Boolean,
     dark: Boolean,
     backdrop: Backdrop,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    delayMs: Int = 0
 ) {
     val fg = if (dark) Color.White else Color(0xFF101114)
-    LiquidButton(
-        onClick = onClick,
-        backdrop = backdrop,
-        surfaceColor = if (dark) Color.White.copy(alpha = 0.10f) else Color.White.copy(alpha = 0.30f),
-        modifier = modifier.size(48.dp)
+    val enter = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        delay(delayMs.toLong())
+        enter.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 220f))
+    }
+    val t by animateFloatAsState(if (open) 1f else 0f, spring(dampingRatio = 0.62f, stiffness = 320f), label = "searchIconMorph")
+
+    Box(
+        modifier.graphicsLayer {
+            val e = enter.value
+            scaleX = e
+            scaleY = e
+            alpha = (e * 2.2f).coerceIn(0f, 1f)
+            rotationZ = (1f - e) * -70f
+        }
     ) {
-        Crossfade(targetState = open, animationSpec = tween(200), label = "searchIcon") { isOpen ->
-            // requiredSize: the button is a 48dp circle, so the 16dp side padding of LiquidButton must not squeeze the icon
-            GlyphIcon(
-                if (isOpen) R.drawable.ic_close else R.drawable.ic_search,
-                fg, 22.dp, Modifier.requiredSize(22.dp)
-            )
+        LiquidButton(
+            onClick = onClick,
+            backdrop = backdrop,
+            surfaceColor = if (dark) Color.White.copy(alpha = 0.10f) else Color.White.copy(alpha = 0.30f),
+            modifier = Modifier.size(48.dp)
+        ) {
+            // both icons sit on the same spot; requiredSize because the 16dp side padding of LiquidButton must not squeeze them
+            Box(Modifier.requiredSize(22.dp)) {
+                GlyphIcon(
+                    R.drawable.ic_search, fg, 22.dp,
+                    Modifier.graphicsLayer {
+                        val k = t.coerceIn(0f, 1f)
+                        rotationZ = t * 90f
+                        alpha = 1f - k
+                        scaleX = 1f - 0.5f * k
+                        scaleY = 1f - 0.5f * k
+                    }
+                )
+                GlyphIcon(
+                    R.drawable.ic_close, fg, 22.dp,
+                    Modifier.graphicsLayer {
+                        val k = t.coerceIn(0f, 1f)
+                        rotationZ = (t - 1f) * 90f
+                        alpha = k
+                        scaleX = 0.5f + 0.5f * k
+                        scaleY = 0.5f + 0.5f * k
+                    }
+                )
+            }
         }
     }
 }
@@ -104,8 +144,10 @@ internal fun HomeSearchPanel(
     modifier: Modifier = Modifier
 ) {
     val p by animateFloatAsState(if (visible) 1f else 0f, tween(280, easing = FastOutSlowInEasing), label = "searchPanel")
+    // the field itself: a spring that grows it out of the button (and slightly overshoots)
+    val grow by animateFloatAsState(if (visible) 1f else 0f, spring(dampingRatio = 0.72f, stiffness = 280f), label = "searchField")
     if (visible || p > 0.001f) {
-        SearchContent(visible, p, dark, backdrop, onSearch, modifier)
+        SearchContent(visible, p, grow, dark, backdrop, onSearch, modifier)
     }
 }
 
@@ -113,6 +155,7 @@ internal fun HomeSearchPanel(
 private fun SearchContent(
     visible: Boolean,
     p: Float,
+    grow: Float,
     dark: Boolean,
     backdrop: Backdrop,
     onSearch: suspend (String) -> List<Channel>,
@@ -164,10 +207,6 @@ private fun SearchContent(
         Column(
             modifier
                 .fillMaxSize()
-                .graphicsLayer {
-                    alpha = p
-                    translationY = (1f - p) * 18.dp.toPx()
-                }
                 .pointerInput(Unit) { detectTapGestures { } }       // covers the list below
         ) {
             // ---- the glass search field
@@ -176,6 +215,14 @@ private fun SearchContent(
                 Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 6.dp)
+                    .graphicsLayer {
+                        // it opens from the button (right side of the screen): wide from 20 %, a little rise
+                        transformOrigin = TransformOrigin(0.96f, 0f)
+                        val g = grow.coerceAtLeast(0f)
+                        scaleX = 0.2f + 0.8f * g
+                        scaleY = 0.7f + 0.3f * g
+                        alpha = (p * 1.6f).coerceIn(0f, 1f)
+                    }
                     .height(52.dp)
                     .liquidCard(backdrop, shape, dark)
                     .padding(horizontal = 18.dp),
@@ -215,7 +262,10 @@ private fun SearchContent(
             }
             if (message == null && list != null) {
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().graphicsLayer {
+                        alpha = p
+                        translationY = (1f - p) * 18.dp.toPx()
+                    },
                     contentPadding = PaddingValues(top = 8.dp, bottom = 130.dp + navBottom)
                 ) {
                     items(list, key = { "found-" + it.id }) { ch ->
@@ -225,7 +275,10 @@ private fun SearchContent(
                 }
             } else {
                 Box(
-                    Modifier.fillMaxWidth().padding(horizontal = 40.dp, vertical = 50.dp),
+                    Modifier.fillMaxWidth().padding(horizontal = 40.dp, vertical = 50.dp).graphicsLayer {
+                        alpha = p
+                        translationY = (1f - p) * 18.dp.toPx()
+                    },
                     contentAlignment = Alignment.TopCenter
                 ) {
                     BasicText(
