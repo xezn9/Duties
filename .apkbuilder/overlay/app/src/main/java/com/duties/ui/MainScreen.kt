@@ -277,9 +277,12 @@ private fun TabPage(
 
     // what the glass buttons of the Create page refract: only the page background (like on the Account page)
     val glassBackdrop = rememberLayerBackdrop()
-    Box(Modifier.fillMaxSize()) {
+    // black dotted background; its dots light up under the finger, drift and ripple when the page opens
+    val dots = rememberDotsState()
+    DotsEntranceWave(dots, delayMs = cascade.base + 250)
+    Box(Modifier.fillMaxSize().dotsTouch(dots)) {
         Box(Modifier.fillMaxSize().layerBackdrop(glassBackdrop)) {
-            AppBackground(dark, variant = index)
+            DotBackground(dots, dark)
         }
         Column(
             Modifier
