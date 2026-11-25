@@ -22,7 +22,7 @@ import java.io.ByteArrayOutputStream
 /*
  * Channels.kt — channels and invitations of the signed-in account, kept on Firestore.
  *
- *   channels/{id}              = { name, username, bio, ownerUid, members[uid], photo (small JPEG, base64), createdAt }
+ *   channels/{id}              = { name, username, bio, ownerUid, members[uid], photo (small JPEG, base64), isPublic, createdAt }
  *   channelUsernames/{lower}   = { uid, channelId }                    (every channel @username is unique)
  *   invites/{channelId}_{toUid} = { channelId, channelName, channelUsername, channelPhoto, fromUid, fromName,
  *                                  fromUsername, toUid, status: pending | accepted | declined, createdAt }
@@ -42,7 +42,9 @@ class Channel(
     /** True when the signed-in account owns the channel (it may delete it). */
     val isOwner: Boolean,
     /** uids of everybody inside (used to prepare the chat room in the Realtime Database, see Chat.kt). */
-    val members: List<String> = emptyList()
+    val members: List<String> = emptyList(),
+    /** Public (true) or private (false), chosen when the channel was created. Old channels have none = public. */
+    val isPublic: Boolean = true
 )
 
 /** A person found by the @username search. */
@@ -135,7 +137,8 @@ class ChannelsState(private val uid: String) {
             ownerUid = owner,
             memberCount = members.coerceAtLeast(1),
             isOwner = owner == uid,
-            members = memberUids
+            members = memberUids,
+            isPublic = d.getBoolean("isPublic") ?: true
         )
     }
 
@@ -165,7 +168,8 @@ class ChannelsState(private val uid: String) {
         photo: Bitmap?,
         invitees: List<FoundUser>,
         fromName: String,
-        fromUsername: String
+        fromUsername: String,
+        isPublic: Boolean = true
     ) {
         val encoded = withContext(Dispatchers.Default) { photo?.let { encodePhoto(it) } }
         val db = FirebaseFirestore.getInstance()
@@ -175,7 +179,7 @@ class ChannelsState(private val uid: String) {
         // the chat room (Realtime Database) is prepared first, so nobody else can claim this channel's chat
         ChatRooms.create(channelRef.id, uid, invitees.map { it.uid })
         try {
-            runCreateTransaction(db, nameRef, channelRef, name, username, bio, encoded, invitees, fromName, fromUsername)
+            runCreateTransaction(db, nameRef, channelRef, name, username, bio, encoded, invitees, fromName, fromUsername, isPublic)
         } catch (e: Exception) {
             ChatRooms.delete(channelRef.id)
             throw e
@@ -192,7 +196,8 @@ class ChannelsState(private val uid: String) {
         encoded: String?,
         invitees: List<FoundUser>,
         fromName: String,
-        fromUsername: String
+        fromUsername: String,
+        isPublic: Boolean
     ) {
         db.runTransaction { tr ->
             if (tr.get(nameRef).exists()) throw UsernameTakenException()
@@ -203,6 +208,7 @@ class ChannelsState(private val uid: String) {
                 "bio" to bio,
                 "ownerUid" to uid,
                 "members" to listOf(uid),
+                "isPublic" to isPublic,
                 "createdAt" to FieldValue.serverTimestamp()
             )
             if (encoded != null) data["photo"] = encoded

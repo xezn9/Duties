@@ -82,6 +82,8 @@
     <string name="create_win_members_title">إضافة أعضاء</string>
     <string name="create_win_members_sub">اختياري · تگدر تضيفهم بعدين</string>
     <string name="create_win_type_title">قناة (عامة/خاصة)</string>
+    <string name="create_win_type_public">عامة</string>
+    <string name="create_win_type_private">خاصة</string>
     <string name="create_win_members_add">إضافة</string>
     <string name="create_win_submit">إنشاء القناة</string>
     <string name="create_win_creating">جاري الإنشاء…</string>

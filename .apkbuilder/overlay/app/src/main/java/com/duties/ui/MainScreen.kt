@@ -353,8 +353,8 @@ private fun TabPage(
                     onCollapsedChange = onRulesFolded,
                     onFormScroll = { formScroll = it },
                     onSearchUsers = { q -> channels.searchUsers(q) },
-                    onSubmitChannel = { name, username, bio, photo, invitees ->
-                        channels.create(name, username, bio, photo, invitees, profile.name, profile.username)
+                    onSubmitChannel = { name, username, bio, photo, invitees, isPublic ->
+                        channels.create(name, username, bio, photo, invitees, profile.name, profile.username, isPublic)
                     }
                 )
             }

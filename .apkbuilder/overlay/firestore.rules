@@ -4,6 +4,8 @@ rules_version = '2';
 // users/{uid}        : the profile (name, username, bio, small photo) - only the owner can write it
 // usernames/{name}   : makes every @username unique (document id = lowercase username)
 // channels/{id}      : a channel (owner and members can read it; the owner can delete it; a member can leave it)
+//                      isPublic (true = public, false = private) is chosen when the channel is created; channels made
+//                      before this field existed have none and count as public
 // channelUsernames/{name} : makes every channel @username unique
 // invites/{channelId}_{uid} : an invitation to a channel (pending / accepted / declined)
 service cloud.firestore {
@@ -49,8 +51,9 @@ service cloud.firestore {
     }
 
     // name: 1..24 | username: 3..24 | bio: 0..150 | members: uids | photo: small JPEG as base64 text (optional)
+    // isPublic: true / false (optional so the old channels without it stay valid)
     function validChannel(d) {
-      return d.keys().hasOnly(['name', 'username', 'bio', 'ownerUid', 'members', 'photo', 'createdAt'])
+      return d.keys().hasOnly(['name', 'username', 'bio', 'ownerUid', 'members', 'photo', 'isPublic', 'createdAt'])
         && d.name is string
         && d.name.size() >= 1 && d.name.size() <= 24
         && d.username is string
@@ -59,6 +62,7 @@ service cloud.firestore {
         && d.bio is string
         && d.bio.size() <= 150
         && d.ownerUid == request.auth.uid
+        && (!('isPublic' in d.keys()) || d.isPublic is bool)
         && (!('photo' in d.keys()) || (d.photo is string && d.photo.size() <= 200000));
     }
 
