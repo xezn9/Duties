@@ -63,11 +63,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Outline
@@ -149,6 +152,7 @@ internal class ChannelDraft {
 
 
 // ---- motion of the form elements
+private const val FORM_LEAD = 0.10f         // the buttons leave first, then the form starts (share of p)
 private const val FORM_STAGGER = 0.065f      // each element starts a bit after the previous one (share of p)
 private const val FORM_SPAN = 0.42f          // how much of p one element needs
 
@@ -167,13 +171,13 @@ private fun FormItem(
     index: Int,
     p: () -> Float,
     modifier: Modifier = Modifier,
-    dy: Dp = 64.dp,
-    startScale: Float = 0.9f,
+    dy: Dp = 110.dp,
+    startScale: Float = 0.86f,
     content: @Composable () -> Unit
 ) {
     Box(
         modifier.graphicsLayer {
-            val a = index * FORM_STAGGER
+            val a = FORM_LEAD + index * FORM_STAGGER
             val k = seg(p(), a, a + FORM_SPAN)
             val e = backOut(k)
             alpha = seg(k, 0f, 0.55f)
@@ -181,7 +185,7 @@ private fun FormItem(
             val s = startScale + (1f - startScale) * e
             scaleX = s
             scaleY = s
-            renderEffect = blurEffect(14.dp.toPx() * (1f - k))
+            renderEffect = blurEffect(18.dp.toPx() * (1f - k))
         }
     ) { content() }
 }
@@ -279,52 +283,86 @@ private fun FormContent(
     var searching by remember { mutableStateOf(false) }
     BackHandler(enabled = searching) { searching = false }
 
-    // ---- places: the submit button stands where the "Create channel" button was (108dp above the navigation bar)
+    // ---- places: the last element (submit) rests where the "Create channel" button was (108dp above the navigation bar)
     val density = LocalDensity.current
     val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     val bottomBase = navBottom + 108.dp
-    val ime = WindowInsets.ime.getBottom(density)
-    val imeDp = with(density) { ime.toDp() }
-    // keyboard: only the part that goes over that place lifts the button and the list
-    val liftPx = (ime - with(density) { bottomBase.roundToPx() }).coerceAtLeast(0)
-    val lift = with(density) { liftPx.toDp() }
-    val submitH = 54.dp
+    val imeDp = with(density) { WindowInsets.ime.getBottom(density).toDp() }
+    val keyboard = imeDp > 0.dp
+
+    val scroll = rememberScrollState()
+    val fog = rememberLayerBackdrop()            // the raw content of the form: the blurred "fog" bands refract it
+    val topFog = 56.dp
+    val bottomFog = 104.dp
 
     Box(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize()) {
-            // ---- top bar: close + title (stays in its place while the rest scrolls)
-            FormItem(0, p, Modifier.fillMaxWidth().padding(horizontal = 24.dp), dy = 36.dp, startScale = 0.94f) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    GlassSurface(
-                        backdrop = backdrop,
-                        container = if (dark) Color(0xFF121212).copy(alpha = 0.40f) else Color.White.copy(alpha = 0.50f),
-                        modifier = Modifier.size(48.dp),
-                        onClick = onClose
-                    ) { GlyphIcon(R.drawable.ic_close, fg, 22.dp) }
-                    Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
-                        BasicText(
-                            stringResource(R.string.create_win_title),
-                            style = TextStyle(color = fg, fontSize = 23.sp, fontWeight = FontWeight.Bold)
-                        )
-                        BasicText(
-                            stringResource(R.string.create_win_sub),
-                            style = TextStyle(color = fg.copy(alpha = 0.6f), fontSize = 12.sp)
-                        )
-                    }
-                }
-            }
-
+        // the scroll area stops above the keyboard (so the field you type in is never covered)
+        Box(Modifier.fillMaxSize().padding(bottom = imeDp)) {
+            // ---- the whole form scrolls as ONE piece: title + close button, photo, fields, cards and the submit button
             Column(
                 Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
+                    .fillMaxSize()
+                    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                    .drawWithContent {
+                        drawContent()
+                        // top: what scrolls up melts away (only once the form was scrolled, so the title is sharp at rest)
+                        val th = topFog.toPx()
+                        val k = (scroll.value / th).coerceIn(0f, 1f)
+                        drawRect(
+                            brush = Brush.verticalGradient(
+                                colors = listOf(Color.Black.copy(alpha = 1f - k), Color.Black),
+                                startY = 0f,
+                                endY = th
+                            ),
+                            topLeft = Offset.Zero,
+                            size = Size(size.width, th),
+                            blendMode = BlendMode.DstIn
+                        )
+                        // bottom: the same, towards the bottom tabs / the keyboard
+                        val bh = bottomFog.toPx()
+                        drawRect(
+                            brush = Brush.verticalGradient(
+                                colors = listOf(Color.Black, Color.Transparent),
+                                startY = size.height - bh,
+                                endY = size.height
+                            ),
+                            topLeft = Offset(0f, size.height - bh),
+                            size = Size(size.width, bh),
+                            blendMode = BlendMode.DstIn
+                        )
+                    }
+                    .layerBackdrop(fog)
+                    .verticalScroll(scroll)
                     .padding(horizontal = 24.dp)
             ) {
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(4.dp))
+
+                // ---- title + close button
+                FormItem(0, p, Modifier.fillMaxWidth(), dy = 60.dp, startScale = 0.92f) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        GlassSurface(
+                            backdrop = backdrop,
+                            container = if (dark) Color(0xFF121212).copy(alpha = 0.40f) else Color.White.copy(alpha = 0.50f),
+                            modifier = Modifier.size(48.dp),
+                            onClick = onClose
+                        ) { GlyphIcon(R.drawable.ic_close, fg, 22.dp) }
+                        Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
+                            BasicText(
+                                stringResource(R.string.create_win_title),
+                                style = TextStyle(color = fg, fontSize = 23.sp, fontWeight = FontWeight.Bold)
+                            )
+                            BasicText(
+                                stringResource(R.string.create_win_sub),
+                                style = TextStyle(color = fg.copy(alpha = 0.6f), fontSize = 12.sp)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(18.dp))
 
                 // ---- channel photo
-                FormItem(2, p, Modifier.fillMaxWidth()) {
+                FormItem(1, p, Modifier.fillMaxWidth()) {
                     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                         ChannelPhoto(
                             photo = draft.photo,
@@ -355,7 +393,7 @@ private fun FormContent(
                 Spacer(Modifier.height(18.dp))
 
                 // ---- name
-                FormItem(3, p, Modifier.fillMaxWidth()) {
+                FormItem(2, p, Modifier.fillMaxWidth()) {
                     LiquidField(
                         icon = R.drawable.ic_tab_account,
                         tint = WIN_ORANGE_SOFT,
@@ -371,7 +409,7 @@ private fun FormContent(
                 }
                 Spacer(Modifier.height(12.dp))
                 // ---- username
-                FormItem(4, p, Modifier.fillMaxWidth()) {
+                FormItem(3, p, Modifier.fillMaxWidth()) {
                     LiquidField(
                         icon = R.drawable.ic_at,
                         tint = WIN_VIOLET,
@@ -395,7 +433,7 @@ private fun FormContent(
                 }
                 Spacer(Modifier.height(12.dp))
                 // ---- bio (optional)
-                FormItem(5, p, Modifier.fillMaxWidth()) {
+                FormItem(4, p, Modifier.fillMaxWidth()) {
                     LiquidField(
                         icon = R.drawable.ic_chat,
                         tint = WIN_MINT,
@@ -413,50 +451,94 @@ private fun FormContent(
                 }
                 Spacer(Modifier.height(12.dp))
                 // ---- channel type: public / private (empty for now, it does nothing yet)
-                FormItem(6, p, Modifier.fillMaxWidth()) {
+                FormItem(5, p, Modifier.fillMaxWidth()) {
                     ChannelTypeCard(bd = backdrop, dark = dark, fg = fg)
                 }
                 Spacer(Modifier.height(12.dp))
                 // ---- members (optional)
-                FormItem(7, p, Modifier.fillMaxWidth()) {
+                FormItem(6, p, Modifier.fillMaxWidth()) {
                     MembersCard(bd = backdrop, dark = dark, fg = fg, count = draft.invitees.size, onAdd = { searching = true })
                 }
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(20.dp))
+
+                // ---- create: the last element of the page (it scrolls with everything else)
+                FormItem(7, p, Modifier.fillMaxWidth(), dy = 90.dp, startScale = 0.9f) {
+                    LiquidButton(
+                        onClick = ::submit,
+                        backdrop = backdrop,
+                        tint = WIN_ORANGE,
+                        modifier = Modifier.fillMaxWidth().height(54.dp)
+                    ) {
+                        BasicText(
+                            stringResource(
+                                when {
+                                    created -> R.string.create_win_done
+                                    busy -> R.string.create_win_creating
+                                    else -> R.string.create_win_submit
+                                }
+                            ),
+                            maxLines = 1,
+                            softWrap = false,
+                            style = TextStyle(color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                        )
+                    }
+                }
+
+                // at the end of the scroll the button stands where "Create channel" was (above the bottom tabs)
+                Spacer(Modifier.height(if (keyboard) 24.dp else bottomBase))
             }
 
-            // room for the submit button (it floats over the bottom of the page, in the place of "Create channel")
-            Spacer(Modifier.height(bottomBase + submitH + 14.dp + lift))
-        }
-
-        // ---- create (takes the place of the "Create channel" button: the same spot, it just fades in over it)
-        FormItem(
-            1, p,
-            Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .padding(start = 24.dp, end = 24.dp, bottom = bottomBase + lift),
-            dy = 0.dp,
-            startScale = 0.96f
-        ) {
-            LiquidButton(
-                onClick = ::submit,
-                backdrop = backdrop,
-                tint = WIN_ORANGE,
-                modifier = Modifier.fillMaxWidth().height(submitH)
-            ) {
-                BasicText(
-                    stringResource(
-                        when {
-                            created -> R.string.create_win_done
-                            busy -> R.string.create_win_creating
-                            else -> R.string.create_win_submit
-                        }
-                    ),
-                    maxLines = 1,
-                    softWrap = false,
-                    style = TextStyle(color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                )
-            }
+            // ---- fog at the top: what scrolls up gets blurred and fades away (blurred copy of the content, faded in as you scroll)
+            Box(
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .height(topFog)
+                    .graphicsLayer {
+                        compositingStrategy = CompositingStrategy.Offscreen
+                        alpha = (scroll.value / topFog.toPx()).coerceIn(0f, 1f)
+                    }
+                    .drawWithContent {
+                        drawContent()
+                        drawRect(
+                            Brush.verticalGradient(
+                                0f to Color.Black.copy(alpha = 0f),
+                                0.35f to Color.Black,
+                                1f to Color.Transparent
+                            ),
+                            blendMode = BlendMode.DstIn
+                        )
+                    }
+                    .drawBackdrop(
+                        backdrop = fog,
+                        shape = { RectangleShape },
+                        effects = { blur(8.dp.toPx()) }
+                    )
+            )
+            // ---- fog at the bottom (towards the tabs / the keyboard)
+            Box(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(bottomFog)
+                    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                    .drawWithContent {
+                        drawContent()
+                        drawRect(
+                            Brush.verticalGradient(
+                                0f to Color.Transparent,
+                                0.45f to Color.Black,
+                                1f to Color.Transparent
+                            ),
+                            blendMode = BlendMode.DstIn
+                        )
+                    }
+                    .drawBackdrop(
+                        backdrop = fog,
+                        shape = { RectangleShape },
+                        effects = { blur(8.dp.toPx()) }
+                    )
+            )
         }
 
         // search window (small, on top of everything in the form; it stops above the bottom tabs when there is no keyboard)

@@ -228,7 +228,7 @@ fun CreatePage(
         fun openWindow() {
             if (windowOpen) return
             windowOpen = true
-            scope.launch { win.animateTo(1f, tween(1000, easing = LinearEasing)) }
+            scope.launch { win.animateTo(1f, tween(1800, easing = LinearEasing)) }
         }
 
         fun closeWindow() {
@@ -236,7 +236,7 @@ fun CreatePage(
             windowOpen = false
             focus.clearFocus()
             // the same thing backwards: the elements leave in the opposite order, then the buttons come back
-            scope.launch { win.animateTo(0f, tween(560, easing = LinearEasing)) }
+            scope.launch { win.animateTo(0f, tween(950, easing = LinearEasing)) }
         }
 
         BackHandler(enabled = windowOpen) { closeWindow() }
@@ -420,18 +420,18 @@ private fun Controls(
     val createShow = remember { Animatable(1f) }
     LaunchedEffect(windowOpen) {
         if (windowOpen) {
-            pillShow.animateTo(0f, tween(320, easing = FastOutSlowInEasing))
+            pillShow.animateTo(0f, tween(700, easing = FastOutSlowInEasing))
         } else {
             snapshotFlow { windowP() }.first { it < 0.35f }
-            pillShow.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 150f))
+            pillShow.animateTo(1f, spring(dampingRatio = 0.55f, stiffness = 90f))
         }
     }
     LaunchedEffect(windowOpen) {
         if (windowOpen) {
-            createShow.animateTo(0f, tween(220, easing = FastOutSlowInEasing))
+            createShow.animateTo(0f, tween(480, easing = FastOutSlowInEasing))
         } else {
-            snapshotFlow { windowP() }.first { it < 0.12f }
-            createShow.animateTo(1f, spring(dampingRatio = 0.62f, stiffness = 200f))
+            snapshotFlow { windowP() }.first { it < 0.25f }
+            createShow.animateTo(1f, spring(dampingRatio = 0.62f, stiffness = 110f))
         }
     }
     val create = remember { Animatable(if (settled) 1f else 0f) }
@@ -501,7 +501,7 @@ private fun Controls(
                                 translationY = -riseDp.toPx() * (1f - cf) + (1f - createIn.value) * revealDy.toPx()
                                 // while the form is open this button is gone: it shrinks, blurs and fades in its place
                                 alpha = seg(cf, 0f, 0.2f) * cs.coerceIn(0f, 1f) * createIn.value
-                                val sc = 0.88f + 0.12f * cs
+                                val sc = 0.8f + 0.2f * cs
                                 scaleX = sc
                                 scaleY = sc
                                 renderEffect = blurEffect(
@@ -580,12 +580,12 @@ private fun Controls(
                             // form open: it sinks down, shrinks, blurs and fades; it comes back with a spring (pop)
                             val ps = pillShow.value
                             val gone = 1f - ps.coerceIn(0f, 1f)
-                            val hs = 0.5f + 0.5f * ps
-                            translationY = -riseDp.toPx() * r + (1f - pillIn.value) * revealDy.toPx() + (1f - ps) * 40.dp.toPx()
+                            val hs = 0.4f + 0.6f * ps
+                            translationY = -riseDp.toPx() * r + (1f - pillIn.value) * revealDy.toPx() + (1f - ps) * 70.dp.toPx()
                             alpha = pillIn.value * ps.coerceIn(0f, 1f)
                             scaleX = g * (1f - 0.14f * travel) * hs
                             scaleY = g * (1f + 0.22f * travel) * hs
-                            renderEffect = blurEffect(14.dp.toPx() * gone)
+                            renderEffect = blurEffect(20.dp.toPx() * gone)
                         }
                 ) {
                     // both labels sit on top of each other and cross-fade; unbounded so they never wrap while it shrinks
