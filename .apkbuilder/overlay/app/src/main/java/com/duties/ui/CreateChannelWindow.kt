@@ -201,6 +201,7 @@ internal fun CreateChannelForm(
     dark: Boolean,
     backdrop: Backdrop,
     draft: ChannelDraft,
+    topExtraPx: Int,
     onClose: () -> Unit,
     onSearch: suspend (String) -> List<FoundUser>,
     onSubmit: suspend (name: String, username: String, bio: String, photo: Bitmap?, invitees: List<FoundUser>) -> Unit
@@ -209,6 +210,7 @@ internal fun CreateChannelForm(
     if (!show) return
 
     FormContent(
+        topExtraPx = topExtraPx,
         p = p,
         dark = dark,
         backdrop = backdrop,
@@ -224,6 +226,7 @@ internal fun CreateChannelForm(
 // =====================================================================
 @Composable
 private fun FormContent(
+    topExtraPx: Int,
     p: () -> Float,
     dark: Boolean,
     backdrop: Backdrop,
@@ -292,10 +295,21 @@ private fun FormContent(
 
     val scroll = rememberScrollState()
     val fog = rememberLayerBackdrop()            // the raw content of the form: the blurred "fog" bands refract it
-    val topFog = 56.dp
-    val bottomFog = 104.dp
+    // The form reaches the very top of the screen (over the status bar and the "Create" title): the content scrolls up
+    // there and melts away in a long fog that starts at the top edge of the screen.
+    val topExtra = with(density) { topExtraPx.toDp() }
+    val topFog = topExtra + 90.dp
+    val bottomFog = 170.dp
+    val rampPx = with(density) { 80.dp.toPx() }  // how far the form has to scroll for the fog to be fully there
 
-    Box(Modifier.fillMaxSize()) {
+    Box(
+        Modifier.layout { measurable, constraints ->
+            val w = constraints.maxWidth
+            val h = constraints.maxHeight
+            val placeable = measurable.measure(Constraints.fixed(w, h + topExtraPx))
+            layout(w, h) { placeable.place(0, -topExtraPx) }
+        }
+    ) {
         // the scroll area stops above the keyboard (so the field you type in is never covered)
         Box(Modifier.fillMaxSize().padding(bottom = imeDp)) {
             // ---- the whole form scrolls as ONE piece: title + close button, photo, fields, cards and the submit button
@@ -305,12 +319,15 @@ private fun FormContent(
                     .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
                     .drawWithContent {
                         drawContent()
-                        // top: what scrolls up melts away (only once the form was scrolled, so the title is sharp at rest)
+                        // top: what scrolls up melts away, all the way to the top edge of the screen
+                        // (only once the form was scrolled, so everything is sharp at rest)
                         val th = topFog.toPx()
-                        val k = (scroll.value / th).coerceIn(0f, 1f)
+                        val kt = (scroll.value / rampPx).coerceIn(0f, 1f)
                         drawRect(
                             brush = Brush.verticalGradient(
-                                colors = listOf(Color.Black.copy(alpha = 1f - k), Color.Black),
+                                0f to Color.Black.copy(alpha = 1f - kt),
+                                0.12f to Color.Black.copy(alpha = 1f - kt),
+                                1f to Color.Black,
                                 startY = 0f,
                                 endY = th
                             ),
@@ -318,11 +335,12 @@ private fun FormContent(
                             size = Size(size.width, th),
                             blendMode = BlendMode.DstIn
                         )
-                        // bottom: the same, towards the bottom tabs / the keyboard
+                        // bottom: the same, towards the bottom tabs / the keyboard (not at the end of the scroll)
                         val bh = bottomFog.toPx()
+                        val kb = ((scroll.maxValue - scroll.value) / rampPx).coerceIn(0f, 1f)
                         drawRect(
                             brush = Brush.verticalGradient(
-                                colors = listOf(Color.Black, Color.Transparent),
+                                colors = listOf(Color.Black, Color.Black.copy(alpha = 1f - kb)),
                                 startY = size.height - bh,
                                 endY = size.height
                             ),
@@ -335,7 +353,8 @@ private fun FormContent(
                     .verticalScroll(scroll)
                     .padding(horizontal = 24.dp)
             ) {
-                Spacer(Modifier.height(4.dp))
+                // the form starts where the page starts (under the "Create" title); above it there is room to scroll into
+                Spacer(Modifier.height(topExtra + 4.dp))
 
                 // ---- title + close button
                 FormItem(0, p, Modifier.fillMaxWidth(), dy = 60.dp, startScale = 0.92f) {
@@ -488,56 +507,38 @@ private fun FormContent(
                 Spacer(Modifier.height(if (keyboard) 24.dp else bottomBase))
             }
 
-            // ---- fog at the top: what scrolls up gets blurred and fades away (blurred copy of the content, faded in as you scroll)
-            Box(
-                Modifier
-                    .align(Alignment.TopCenter)
-                    .fillMaxWidth()
-                    .height(topFog)
-                    .graphicsLayer {
-                        compositingStrategy = CompositingStrategy.Offscreen
-                        alpha = (scroll.value / topFog.toPx()).coerceIn(0f, 1f)
-                    }
-                    .drawWithContent {
-                        drawContent()
-                        drawRect(
-                            Brush.verticalGradient(
-                                0f to Color.Black.copy(alpha = 0f),
-                                0.35f to Color.Black,
-                                1f to Color.Transparent
-                            ),
-                            blendMode = BlendMode.DstIn
-                        )
-                    }
-                    .drawBackdrop(
-                        backdrop = fog,
-                        shape = { RectangleShape },
-                        effects = { blur(8.dp.toPx()) }
-                    )
+            // ---- fog at the top (over the "Create" title, up to the top edge of the screen): what scrolls up gets blurred and
+            // fades away. Two blurred copies of the content (soft over the whole length, strong near the top edge), shown as you scroll.
+            val topStrength: () -> Float = { (scroll.value / rampPx).coerceIn(0f, 1f) }
+            FogBand(
+                backdrop = fog,
+                blurRadius = 5.dp,
+                strength = topStrength,
+                stops = arrayOf(0f to Color.Transparent, 0.2f to Color.Black, 0.85f to Color.Black.copy(alpha = 0.25f), 1f to Color.Transparent),
+                modifier = Modifier.align(Alignment.TopCenter).height(topFog)
             )
-            // ---- fog at the bottom (towards the tabs / the keyboard)
-            Box(
-                Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .height(bottomFog)
-                    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-                    .drawWithContent {
-                        drawContent()
-                        drawRect(
-                            Brush.verticalGradient(
-                                0f to Color.Transparent,
-                                0.45f to Color.Black,
-                                1f to Color.Transparent
-                            ),
-                            blendMode = BlendMode.DstIn
-                        )
-                    }
-                    .drawBackdrop(
-                        backdrop = fog,
-                        shape = { RectangleShape },
-                        effects = { blur(8.dp.toPx()) }
-                    )
+            FogBand(
+                backdrop = fog,
+                blurRadius = 14.dp,
+                strength = topStrength,
+                stops = arrayOf(0f to Color.Transparent, 0.3f to Color.Black, 1f to Color.Transparent),
+                modifier = Modifier.align(Alignment.TopCenter).height(topFog * 0.55f)
+            )
+            // ---- fog at the bottom (towards the tabs / the keyboard), not at the end of the scroll
+            val bottomStrength: () -> Float = { ((scroll.maxValue - scroll.value) / rampPx).coerceIn(0f, 1f) }
+            FogBand(
+                backdrop = fog,
+                blurRadius = 5.dp,
+                strength = bottomStrength,
+                stops = arrayOf(0f to Color.Transparent, 0.15f to Color.Black.copy(alpha = 0.25f), 0.8f to Color.Black, 1f to Color.Transparent),
+                modifier = Modifier.align(Alignment.BottomCenter).height(bottomFog)
+            )
+            FogBand(
+                backdrop = fog,
+                blurRadius = 14.dp,
+                strength = bottomStrength,
+                stops = arrayOf(0f to Color.Transparent, 0.7f to Color.Black, 1f to Color.Transparent),
+                modifier = Modifier.align(Alignment.BottomCenter).height(bottomFog * 0.55f)
             )
         }
 
@@ -547,7 +548,7 @@ private fun FormContent(
             enter = fadeIn(tween(180)) + scaleIn(spring(dampingRatio = 0.75f, stiffness = 420f), initialScale = 0.88f),
             exit = fadeOut(tween(150)) + scaleOut(tween(150), targetScale = 0.92f)
         ) {
-            Box(Modifier.fillMaxSize().padding(bottom = if (imeDp > 0.dp) 0.dp else bottomBase)) {
+            Box(Modifier.fillMaxSize().padding(top = topExtra, bottom = if (keyboard) 0.dp else bottomBase)) {
                 MemberSearchPopup(
                     dark = dark,
                     backdrop = backdrop,
@@ -559,6 +560,37 @@ private fun FormContent(
             }
         }
     }
+}
+
+/**
+ * A strip of blurred content: the blurred copy of the form ([backdrop]) in a strip, faded by [stops] (top -> bottom)
+ * and shown with [strength] (0..1, read while drawing, so it follows the scroll without recomposing).
+ */
+@Composable
+private fun FogBand(
+    backdrop: Backdrop,
+    blurRadius: Dp,
+    strength: () -> Float,
+    stops: Array<Pair<Float, Color>>,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier
+            .fillMaxWidth()
+            .graphicsLayer {
+                compositingStrategy = CompositingStrategy.Offscreen
+                this.alpha = strength()
+            }
+            .drawWithContent {
+                drawContent()
+                drawRect(Brush.verticalGradient(*stops), blendMode = BlendMode.DstIn)
+            }
+            .drawBackdrop(
+                backdrop = backdrop,
+                shape = { RectangleShape },
+                effects = { blur(blurRadius.toPx()) }
+            )
+    )
 }
 
 /** Round photo with a slowly turning colourful ring and a breathing "+" badge. Tap = pick a photo. */

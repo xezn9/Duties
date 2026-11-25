@@ -259,7 +259,9 @@ fun CreatePage(
             }
         }
 
-        Box(modifier.fillMaxWidth()) {
+        // distance from the top of the screen to the top of this page: the form reaches up there (over the "Create" title)
+        var screenTop by remember { mutableIntStateOf(0) }
+        Box(modifier.fillMaxWidth().onGloballyPositioned { screenTop = it.boundsInRoot().top.toInt().coerceAtLeast(0) }) {
             // the pages go edge to edge (sides and bottom of the screen), nothing clips them early
             if (showPages) {
                 key(round) {
@@ -357,6 +359,7 @@ fun CreatePage(
                 dark = dark,
                 backdrop = backdrop,
                 draft = draft,
+                topExtraPx = screenTop,
                 onClose = ::closeWindow,
                 onSearch = onSearchUsers,
                 onSubmit = { name, username, bio, photo, invitees ->
