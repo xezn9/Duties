@@ -34,6 +34,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -61,13 +62,14 @@ import com.duties.R
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.catalog.components.LiquidButton
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /*
  * HomeSearch.kt — search for channels from the Home tab.
  *
  *   HomeSearchButton   the round liquid glass button at the right of the "Home" title (a X while the search is open)
  *   HomeSearchPanel    a glass search field + the channels found by name or @username. It covers the channel list
- *                      while it is open. The results are only SHOWN for now: tapping one does nothing yet.
+ *                      while it is open. A public channel that I am not in has a "Join" button: it adds me as a member.
  */
 
 /**
@@ -141,13 +143,15 @@ internal fun HomeSearchPanel(
     dark: Boolean,
     backdrop: Backdrop,
     onSearch: suspend (String) -> List<Channel>,
+    myChannelIds: Set<String>,
+    onJoin: suspend (Channel) -> Boolean,
     modifier: Modifier = Modifier
 ) {
     val p by animateFloatAsState(if (visible) 1f else 0f, tween(280, easing = FastOutSlowInEasing), label = "searchPanel")
     // the field itself: a spring that grows it out of the button (and slightly overshoots)
     val grow by animateFloatAsState(if (visible) 1f else 0f, spring(dampingRatio = 0.72f, stiffness = 280f), label = "searchField")
     if (visible || p > 0.001f) {
-        SearchContent(visible, p, grow, dark, backdrop, onSearch, modifier)
+        SearchContent(visible, p, grow, dark, backdrop, onSearch, myChannelIds, onJoin, modifier)
     }
 }
 
@@ -159,8 +163,13 @@ private fun SearchContent(
     dark: Boolean,
     backdrop: Backdrop,
     onSearch: suspend (String) -> List<Channel>,
+    myChannelIds: Set<String>,
+    onJoin: suspend (Channel) -> Boolean,
     modifier: Modifier
 ) {
+    val scope = rememberCoroutineScope()
+    var joining by remember { mutableStateOf<Set<String>>(emptySet()) }      // being joined right now
+    var justJoined by remember { mutableStateOf<Set<String>>(emptySet()) }   // joined from this search (count + 1)
     val textColor = if (dark) Color.White else Color(0xFF101114)
     val subColor = if (dark) Color(0xFFB0B3B8) else Color(0xFF55586A)
     val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
@@ -269,8 +278,27 @@ private fun SearchContent(
                     contentPadding = PaddingValues(top = 8.dp, bottom = 130.dp + navBottom)
                 ) {
                     items(list, key = { "found-" + it.id }) { ch ->
-                        // nothing happens when a result is tapped, for now
-                        SearchResultRow(ch, textColor, subColor, Modifier.animateItem())
+                        SearchResultRow(
+                            ch = ch,
+                            joined = ch.id in myChannelIds || ch.id in justJoined,
+                            joining = ch.id in joining,
+                            extraMember = ch.id in justJoined,
+                            dark = dark,
+                            backdrop = backdrop,
+                            textColor = textColor,
+                            subColor = subColor,
+                            onJoin = {
+                                if (ch.id !in joining) {
+                                    joining = joining + ch.id
+                                    scope.launch {
+                                        val ok = onJoin(ch)
+                                        if (ok) justJoined = justJoined + ch.id
+                                        joining = joining - ch.id
+                                    }
+                                }
+                            },
+                            modifier = Modifier.animateItem()
+                        )
                     }
                 }
             } else {
@@ -295,8 +323,14 @@ private fun SearchContent(
 @Composable
 private fun SearchResultRow(
     ch: Channel,
+    joined: Boolean,
+    joining: Boolean,
+    extraMember: Boolean,
+    dark: Boolean,
+    backdrop: Backdrop,
     textColor: Color,
     subColor: Color,
+    onJoin: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -333,9 +367,34 @@ private fun SearchResultRow(
             GlyphIcon(R.drawable.ic_people, subColor, 16.dp)
             Spacer(Modifier.width(5.dp))
             BasicText(
-                ch.memberCount.toString(),
+                (ch.memberCount + if (extraMember) 1 else 0).toString(),
                 style = TextStyle(color = subColor, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
             )
+        }
+        // Join button: only for a public channel I am not in (a private one is by invitation only)
+        if (joined) {
+            Spacer(Modifier.width(10.dp))
+            BasicText(
+                stringResource(R.string.search_joined),
+                maxLines = 1,
+                softWrap = false,
+                style = TextStyle(color = subColor, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            )
+        } else if (ch.isPublic) {
+            Spacer(Modifier.width(10.dp))
+            LiquidButton(
+                onClick = { if (!joining) onJoin() },
+                backdrop = backdrop,
+                tint = Color(0xFFDB7608),
+                modifier = Modifier.width(96.dp).height(38.dp)
+            ) {
+                BasicText(
+                    if (joining) "…" else stringResource(R.string.search_join),
+                    maxLines = 1,
+                    softWrap = false,
+                    style = TextStyle(color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                )
+            }
         }
     }
 }

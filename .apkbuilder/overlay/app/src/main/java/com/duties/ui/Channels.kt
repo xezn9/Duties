@@ -244,6 +244,18 @@ class ChannelsState(private val uid: String) {
         ChatRooms.join(invite.channelId, uid)
     }
 
+    /**
+     * Join a PUBLIC channel found by the search (no invitation needed): my uid is added to the channel's members
+     * and I am inside its chat room too. Then the channel shows up in my Home list by itself (my listener sees it).
+     */
+    suspend fun join(channel: Channel) {
+        if (!channel.isPublic) return
+        FirebaseFirestore.getInstance().collection("channels").document(channel.id)
+            .update("members", FieldValue.arrayUnion(uid))
+            .await()
+        ChatRooms.join(channel.id, uid)
+    }
+
     /** Decline: the invite is marked declined (it disappears from Home). */
     suspend fun decline(invite: Invite) {
         FirebaseFirestore.getInstance().collection("invites").document(invite.id)

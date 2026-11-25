@@ -124,6 +124,8 @@
     <string name="search_idle">اكتب اسم القناة أو اليوزر مالها وتطلع النتائج هنا</string>
     <string name="search_loading">دا أدوّر…</string>
     <string name="search_none">ما لگيت قناة بهذا الاسم</string>
+    <string name="search_join">انضمام</string>
+    <string name="search_joined">منضم</string>
     <string name="search_failed">ما گدرت أبحث، تأكد من الإنترنت وجرب مرة ثانية</string>
     <string name="home_empty">ما عندك قنوات لحد الان\nسوّي أول قناة من تاب Create وتطلع هنا مثل المحادثة</string>
 

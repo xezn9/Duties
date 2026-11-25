@@ -382,7 +382,9 @@ private fun TabPage(
                         visible = searching,
                         dark = dark,
                         backdrop = glassBackdrop,
-                        onSearch = { q -> channels.searchChannels(q) }
+                        onSearch = { q -> channels.searchChannels(q) },
+                        myChannelIds = channels.channels.map { it.id }.toSet(),
+                        onJoin = { ch -> runCatching { channels.join(ch) }.onFailure { failToast() }.isSuccess }
                     )
                 }
             }
