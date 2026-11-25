@@ -4,21 +4,23 @@ import androidx.compose.foundation.shape.AbsoluteRoundedCornerShape
 import androidx.compose.foundation.shape.CornerBasedShape
 import androidx.compose.ui.unit.LayoutDirection
 import com.kyant.backdrop.BackdropEffectScope
-import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.runtimeShaderEffect
 import com.kyant.backdrop.isRuntimeShaderSupported
 import com.kyant.shapes.RoundedRectangularShape
 
 /**
- * Same as the library's `lens(...)`, but the rainbow (chromatic aberration) at the edge of the glass is a
- * NUMBER, and it is drawn as a soft continuous spectrum all around the rim (like a real glass lens) instead
- * of the library's 7 hard bands that only show in the corners:
+ * The liquid glass lens of the app = the library's `lens(...)` + the two fixes the reference app has:
  *
- *  - [chromaticAberration] = 0   -> exactly the library lens (no rainbow, cheapest).
- *  - [chromaticAberration] = 1   -> a clear pastel rainbow smear along the whole edge.
- *  - bigger than 1               -> a wider smear.
+ *  1. the color samples are clamped inside the glass image (without it the edge samples fall outside and
+ *     show dark / black arcs at the top and bottom of the glass), and
+ *  2. the direction of the bend can never be a zero vector (that made a visible split through the glass).
  *
- * The edge bending is the library's (backdrop 2.0.1, Apache 2.0); only the color splitting is ours.
+ * The rainbow (chromatic aberration) is a NUMBER, not on/off:
+ *
+ *  - [chromaticAberration] = 0   -> no rainbow (cheaper shader, one sample).
+ *  - [chromaticAberration] = 1   -> exactly the rainbow of the library with `chromaticAberration = true`
+ *                                   (7 color samples), which is what the reference app uses.
+ *  - bigger than 1               -> a wider rainbow.
  */
 fun BackdropEffectScope.glassLens(
     refractionHeight: Float,
@@ -26,10 +28,6 @@ fun BackdropEffectScope.glassLens(
     depthEffect: Boolean = false,
     chromaticAberration: Float = 0f
 ) {
-    if (chromaticAberration <= 0.001f) {
-        lens(refractionHeight, refractionAmount, depthEffect, false)
-        return
-    }
     if (!isRuntimeShaderSupported()) return
     if (refractionHeight <= 0f || refractionAmount <= 0f) return
 
@@ -43,15 +41,21 @@ fun BackdropEffectScope.glassLens(
     val w = size.width
     val h = size.height
     val pad = padding
+    val rainbow = chromaticAberration > 0.001f
 
-    runtimeShaderEffect("DutiesRefractionDispersion", DispersionShader, "content") {
+    runtimeShaderEffect(
+        if (rainbow) "DutiesRefractionDispersion" else "DutiesRefraction",
+        if (rainbow) DispersionShader else RefractionShader,
+        "content"
+    ) {
         setFloatUniform("size", w, h)
+        setFloatUniform("contentSize", w + 2f * pad, h + 2f * pad)
         setFloatUniform("offset", -pad, -pad)
         setFloatUniform("cornerRadii", radii)
         setFloatUniform("refractionHeight", refractionHeight)
         setFloatUniform("refractionAmount", -refractionAmount)
         setFloatUniform("depthEffect", if (depthEffect) 1f else 0f)
-        setFloatUniform("chromaticAberration", chromaticAberration)
+        if (rainbow) setFloatUniform("chromaticAberration", chromaticAberration)
     }
 }
 
@@ -85,16 +89,16 @@ private fun BackdropEffectScope.glassCornerRadii(): FloatArray? = when (val s = 
     else -> null
 }
 
-private const val DispersionShader = """
+private const val ShaderHead = """
 uniform shader content;
 
 uniform float2 size;
+uniform float2 contentSize;
 uniform float2 offset;
 uniform float4 cornerRadii;
 uniform float refractionHeight;
 uniform float refractionAmount;
 uniform float depthEffect;
-uniform float chromaticAberration;
 
 float radiusAt(float2 coord, float4 radii) {
     if (coord.x >= 0.0) {
@@ -116,16 +120,60 @@ float sdRoundedRect(float2 coord, float2 halfSize, float radius) {
 float2 gradSdRoundedRect(float2 coord, float2 halfSize, float radius) {
     float2 cornerCoord = abs(coord) - (halfSize - float2(radius));
     if (cornerCoord.x >= 0.0 || cornerCoord.y >= 0.0) {
-        return sign(coord) * normalize(max(cornerCoord, 0.0));
+        float2 outside = max(cornerCoord, 0.0);
+        float outsideLength = length(outside);
+        return outsideLength > 0.0001
+            ? sign(coord) * (outside / outsideLength)
+            : float2(0.0);
     } else {
         float gradX = step(cornerCoord.y, cornerCoord.x);
         return sign(coord) * float2(gradX, 1.0 - gradX);
     }
 }
 
+// the bend direction must never be a zero vector
+float2 safeNormalize(float2 value) {
+    float lengthSquared = dot(value, value);
+    return lengthSquared > 0.000001
+        ? value * inversesqrt(lengthSquared)
+        : float2(1.0, 0.0);
+}
+
+// samples never leave the glass image
+float2 clampSampleCoord(float2 coord) {
+    return clamp(coord, float2(0.5), max(contentSize - float2(0.5), float2(0.5)));
+}
+
 float circleMap(float x) {
     return 1.0 - sqrt(1.0 - x * x);
 }
+"""
+
+private const val RefractionShader = ShaderHead + """
+half4 main(float2 coord) {
+    float2 halfSize = size * 0.5;
+    float2 centeredCoord = (coord + offset) - halfSize;
+    float radius = radiusAt(coord, cornerRadii);
+
+    float sd = sdRoundedRect(centeredCoord, halfSize, radius);
+    if (-sd >= refractionHeight) {
+        return content.eval(coord);
+    }
+    sd = min(sd, 0.0);
+
+    float d = circleMap(1.0 - -sd / refractionHeight) * refractionAmount;
+    float gradRadius = min(radius * 1.5, min(halfSize.x, halfSize.y));
+    float2 grad = safeNormalize(
+        gradSdRoundedRect(centeredCoord, halfSize, gradRadius)
+            + depthEffect * safeNormalize(centeredCoord)
+    );
+
+    return content.eval(clampSampleCoord(coord + d * grad));
+}
+"""
+
+private const val DispersionShader = ShaderHead + """
+uniform float chromaticAberration;
 
 half4 main(float2 coord) {
     float2 halfSize = size * 0.5;
@@ -140,29 +188,50 @@ half4 main(float2 coord) {
 
     float d = circleMap(1.0 - -sd / refractionHeight) * refractionAmount;
     float gradRadius = min(radius * 1.5, min(halfSize.x, halfSize.y));
-    float2 grad = normalize(gradSdRoundedRect(centeredCoord, halfSize, gradRadius) + depthEffect * normalize(centeredCoord));
+    float2 grad = safeNormalize(
+        gradSdRoundedRect(centeredCoord, halfSize, gradRadius)
+            + depthEffect * safeNormalize(centeredCoord)
+    );
 
-    float2 refractedCoord = coord + d * grad;
+    float2 refractedCoord = clampSampleCoord(coord + d * grad);
+    float dispersionIntensity = chromaticAberration
+        * ((centeredCoord.x * centeredCoord.y) / max(halfSize.x * halfSize.y, 0.0001));
+    float2 dispersedCoord = d * grad * dispersionIntensity;
 
-    // the colors are spread along the direction the edge bends the light (outwards / inwards),
-    // the same way on the whole rim, 12 samples from red to blue so it is a smooth spectrum
-    float2 spread = d * grad * chromaticAberration * 1.5;
+    half4 color = half4(0.0);
 
-    float3 acc = float3(0.0);
-    float3 wsum = float3(0.0);
-    float alpha = 0.0;
-    for (int i = 0; i < 12; i++) {
-        float t = float(i) / 11.0;
-        float3 w = max(float3(
-            1.0 - abs(t) / 0.65,
-            1.0 - abs(t - 0.5) / 0.65,
-            1.0 - abs(t - 1.0) / 0.65
-        ), float3(0.0));
-        half4 s = content.eval(refractedCoord + spread * ((t - 0.5) * 2.0));
-        acc += float3(s.rgb) * w;
-        wsum += w;
-        alpha += float(s.a);
-    }
-    return half4(half3(acc / wsum), half(alpha / 12.0));
+    half4 red = content.eval(clampSampleCoord(refractedCoord + dispersedCoord));
+    color.r += red.r / 3.5;
+    color.a += red.a / 7.0;
+
+    half4 orange = content.eval(clampSampleCoord(refractedCoord + dispersedCoord * (2.0 / 3.0)));
+    color.r += orange.r / 3.5;
+    color.g += orange.g / 7.0;
+    color.a += orange.a / 7.0;
+
+    half4 yellow = content.eval(clampSampleCoord(refractedCoord + dispersedCoord * (1.0 / 3.0)));
+    color.r += yellow.r / 3.5;
+    color.g += yellow.g / 3.5;
+    color.a += yellow.a / 7.0;
+
+    half4 green = content.eval(clampSampleCoord(refractedCoord));
+    color.g += green.g / 3.5;
+    color.a += green.a / 7.0;
+
+    half4 cyan = content.eval(clampSampleCoord(refractedCoord - dispersedCoord * (1.0 / 3.0)));
+    color.g += cyan.g / 3.5;
+    color.b += cyan.b / 3.0;
+    color.a += cyan.a / 7.0;
+
+    half4 blue = content.eval(clampSampleCoord(refractedCoord - dispersedCoord * (2.0 / 3.0)));
+    color.b += blue.b / 3.0;
+    color.a += blue.a / 7.0;
+
+    half4 purple = content.eval(clampSampleCoord(refractedCoord - dispersedCoord));
+    color.r += purple.r / 7.0;
+    color.b += purple.b / 3.0;
+    color.a += purple.a / 7.0;
+
+    return color;
 }
 """
