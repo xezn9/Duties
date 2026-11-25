@@ -75,7 +75,8 @@ import kotlinx.coroutines.delay
 
 /**
  * Home tab: the channels of the account as a chat list (photo, name, last line, number of members).
- * The newest channel is on top. Empty for now when there are no channels.
+ * The newest channel is on top. Empty for now when there are no channels. The rows sit directly on the dotted
+ * page (no glass plate behind them).
  *
  * Entering the tab: the rows come in one after another, right behind the title (HyperSpring cascade: each row
  * rises, sharpens from a blur and settles). Long press on a row: a small menu (see ChannelMenu.kt).
@@ -119,57 +120,6 @@ internal fun HomePage(
                 }
             } else {
                 val listState = rememberLazyListState()
-                // index of the first channel row inside the list (the invites and their titles come before it)
-                val firstChannelIndex = if (invites.isEmpty()) 0 else 1 + invites.size + (if (channels.isNotEmpty()) 1 else 0)
-                val rowH = ROW_AVATAR + 20.dp                     // every channel row has this height
-                val pad = 10.dp
-                // the plate under the chats grows (with a soft spring) every time a chat is added, and shrinks when one goes
-                val plateH by animateDpAsState(
-                    targetValue = if (channels.isEmpty()) 0.dp else rowH * channels.size + pad * 2,
-                    animationSpec = spring(dampingRatio = 0.72f, stiffness = 230f),
-                    label = "plateH"
-                )
-                val plateAlpha by animateFloatAsState(
-                    if (channels.isEmpty()) 0f else 1f, tween(350), label = "plateA"
-                )
-                val plateSurface = if (dark) Color.White.copy(alpha = 0.055f) else Color.White.copy(alpha = 0.55f)
-                val plateBorder = if (dark) Color.White.copy(alpha = 0.10f) else Color.Black.copy(alpha = 0.07f)
-                if (plateH > 1.dp) {
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 10.dp)
-                            .height(plateH)
-                            .graphicsLayer {
-                                // sits behind the chat rows and scrolls with them (same fixed row height)
-                                val info = listState.layoutInfo
-                                val first = info.visibleItemsInfo.firstOrNull { it.index == firstChannelIndex }
-                                val top = when {
-                                    first != null -> (first.offset - info.viewportStartOffset).toFloat()
-                                    listState.firstVisibleItemIndex > firstChannelIndex ->
-                                        -(listState.firstVisibleItemScrollOffset +
-                                            (listState.firstVisibleItemIndex - firstChannelIndex) * rowH.toPx()) -
-                                            info.viewportStartOffset
-                                    else -> 100000f                       // still below the screen
-                                }
-                                translationY = top - pad.toPx()
-                                alpha = plateAlpha
-                                val v = menuP.value.coerceIn(0f, 1f)
-                                renderEffect = blurEffect(5.dp.toPx() * v)
-                            }
-                            .drawBackdrop(
-                                backdrop = backdrop,
-                                shape = { RoundedCornerShape(30.dp) },
-                                effects = {
-                                    vibrancy()
-                                    blur(3f.dp.toPx())
-                                    lens(18f.dp.toPx(), 26f.dp.toPx())
-                                },
-                                onDrawSurface = { drawRect(plateSurface) }
-                            )
-                            .border(1.dp, plateBorder, RoundedCornerShape(30.dp))
-                    )
-                }
                 LazyColumn(
                     state = listState,
                     modifier = Modifier
