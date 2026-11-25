@@ -177,7 +177,7 @@ class ChannelsState(private val uid: String) {
         val nameRef = db.collection("channelUsernames").document(lower)
         val channelRef = db.collection("channels").document()
         // the chat room (Realtime Database) is prepared first, so nobody else can claim this channel's chat
-        ChatRooms.create(channelRef.id, uid, invitees.map { it.uid })
+        ChatRooms.create(channelRef.id, uid, invitees.map { it.uid }, isPublic)
         try {
             runCreateTransaction(db, nameRef, channelRef, name, username, bio, encoded, invitees, fromName, fromUsername, isPublic)
         } catch (e: Exception) {
@@ -253,7 +253,7 @@ class ChannelsState(private val uid: String) {
         FirebaseFirestore.getInstance().collection("channels").document(channel.id)
             .update("members", FieldValue.arrayUnion(uid))
             .await()
-        ChatRooms.join(channel.id, uid)
+        ChatRooms.joinPublic(channel.id, uid)
     }
 
     /** Decline: the invite is marked declined (it disappears from Home). */

@@ -28,6 +28,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -62,6 +63,9 @@ import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.kyant.backdrop.catalog.components.LiquidBottomTab
 import com.kyant.backdrop.catalog.components.LiquidBottomTabs
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -384,7 +388,21 @@ private fun TabPage(
                         backdrop = glassBackdrop,
                         onSearch = { q -> channels.searchChannels(q) },
                         myChannelIds = channels.channels.map { it.id }.toSet(),
-                        onJoin = { ch -> runCatching { channels.join(ch) }.onFailure { failToast() }.isSuccess }
+                        onJoin = { ch ->
+                            val ok = runCatching { channels.join(ch) }.onFailure { failToast() }.isSuccess
+                            if (ok) {
+                                // wait (max 4 s) until the channel shows up in my list, otherwise the chat would be
+                                // closed at once ("the channel is gone"), then close the search and open the chat
+                                val mine = withTimeoutOrNull(4000) {
+                                    snapshotFlow { channels.channels.firstOrNull { it.id == ch.id } }.filterNotNull().first()
+                                }
+                                if (mine != null) {
+                                    searching = false
+                                    onOpenChat(mine, Rect.Zero) { null }
+                                }
+                            }
+                            ok
+                        }
                     )
                 }
             }
