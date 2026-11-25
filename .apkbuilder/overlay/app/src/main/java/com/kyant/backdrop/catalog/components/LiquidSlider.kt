@@ -42,6 +42,7 @@ import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
 import com.duties.ui.glassLens
+import com.duties.ui.AppAccent
 import com.duties.ui.GlassTheme
 import com.kyant.backdrop.highlight.Highlight
 import com.kyant.backdrop.shadow.InnerShadow
@@ -67,9 +68,10 @@ fun LiquidSlider(
     dark: Boolean = isSystemInDarkTheme()
 ) {
     val isLightTheme = !dark
-    val accentColor =
+    val accentColor = AppAccent.pick(
         if (isLightTheme) Color(0xFF0088FF)
         else Color(0xFF0091FF)
+    )
     val trackColor =
         if (isLightTheme) Color(0xFF787878).copy(0.2f)
         else Color(0xFF787880).copy(0.36f)

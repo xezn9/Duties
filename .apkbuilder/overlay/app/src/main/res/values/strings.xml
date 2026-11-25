@@ -53,6 +53,9 @@
     <string name="glass_refraction">الانكسار</string>
     <string name="glass_refraction_hint">انحناء الحواف مثل العدسة</string>
     <string name="glass_dispersion">تقزّح الألوان</string>
+    <string name="app_color_title">لون التطبيق</string>
+    <string name="app_color_hint">يغيّر ألوان التابات والأزرار والنقاط بكل التطبيق</string>
+    <string name="app_color_original">اللون الأصلي</string>
     <string name="glass_dispersion_hint">ألوان قوس قزح على حافة الانكسار</string>
     <string name="logout">تسجيل خروج</string>
     <string name="logout_title">تسجيل الخروج</string>

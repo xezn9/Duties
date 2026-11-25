@@ -385,7 +385,7 @@ private fun SearchResultRow(
             LiquidButton(
                 onClick = { if (!joining) onJoin() },
                 backdrop = backdrop,
-                tint = Color(0xFFDB7608),
+                tint = AppAccent.deep(Color(0xFFDB7608)),
                 modifier = Modifier.width(96.dp).height(38.dp)
             ) {
                 BasicText(

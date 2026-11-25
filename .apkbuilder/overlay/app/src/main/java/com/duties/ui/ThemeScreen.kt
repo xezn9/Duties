@@ -1,6 +1,18 @@
 package com.duties.ui
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -64,11 +76,15 @@ fun ThemeScreen(dark: Boolean, onClose: () -> Unit) {
     // the values are saved on the phone shortly after the last move of a slider
     LaunchedEffect(Unit) {
         snapshotFlow {
-            listOf(GlassTheme.transparency, GlassTheme.blur, GlassTheme.refraction, GlassTheme.dispersion)
+            listOf(
+                GlassTheme.transparency, GlassTheme.blur, GlassTheme.refraction, GlassTheme.dispersion,
+                AppAccent.index.toFloat()
+            )
         }
             .collectLatest {
                 delay(250)
                 GlassTheme.save(context)
+                AppAccent.save(context)
             }
     }
 
@@ -162,7 +178,96 @@ fun ThemeScreen(dark: Boolean, onClose: () -> Unit) {
                     )
                 }
             }
+            Spacer(Modifier.height(16.dp))
+
+            // ---- app color: 20 colors that recolor the whole app
+            Emerge(delayMs = 250, modifier = Modifier.fillMaxWidth()) {
+                val shape = RoundedCornerShape(28.dp)
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .liquidCard(glassBackdrop, shape, dark)
+                        .padding(horizontal = 18.dp, vertical = 16.dp)
+                ) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        BasicText(
+                            stringResource(R.string.app_color_title),
+                            modifier = Modifier.weight(1f),
+                            style = TextStyle(color = fg, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        )
+                        BasicText(
+                            if (AppAccent.active) AppAccent.swatches[AppAccent.index].name
+                            else stringResource(R.string.app_color_original),
+                            style = TextStyle(color = fg.copy(alpha = 0.7f), fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                        )
+                    }
+                    BasicText(
+                        stringResource(R.string.app_color_hint),
+                        style = TextStyle(color = fg.copy(alpha = 0.55f), fontSize = 12.sp)
+                    )
+                    Spacer(Modifier.height(14.dp))
+                    AppAccent.swatches.chunked(5).forEachIndexed { row, items ->
+                        if (row > 0) Spacer(Modifier.height(12.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            items.forEachIndexed { col, swatch ->
+                                val i = row * 5 + col
+                                ColorDot(
+                                    color = swatch.color,
+                                    selected = AppAccent.index == i,
+                                    fg = fg,
+                                    onClick = { AppAccent.index = i }
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(16.dp))
+                    GlassSurface(
+                        backdrop = glassBackdrop,
+                        container = if (dark) Color(0xFF121212).copy(alpha = 0.40f) else Color.White.copy(alpha = 0.50f),
+                        modifier = Modifier.fillMaxWidth().height(46.dp),
+                        onClick = { AppAccent.index = -1 }
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (!AppAccent.active) {
+                                GlyphIcon(R.drawable.ic_check, fg, 18.dp)
+                                Spacer(Modifier.width(8.dp))
+                            }
+                            BasicText(
+                                stringResource(R.string.app_color_original),
+                                style = TextStyle(color = fg, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                            )
+                        }
+                    }
+                }
+            }
             Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+/** One round color. The chosen one gets a ring around it and a check mark on it. */
+@Composable
+private fun ColorDot(color: Color, selected: Boolean, fg: Color, onClick: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.88f else 1f,
+        animationSpec = spring(dampingRatio = 0.5f, stiffness = 400f),
+        label = "colorDot"
+    )
+    Box(
+        Modifier
+            .size(48.dp)
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .border(2.5.dp, if (selected) fg else Color.Transparent, CircleShape)
+            .padding(4.dp)
+            .clip(CircleShape)
+            .background(color)
+            .clickable(interactionSource = interaction, indication = null, role = Role.Button, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        if (selected) {
+            GlyphIcon(R.drawable.ic_check, if (color.luminance() > 0.55f) Color(0xFF101114) else Color.White, 20.dp)
         }
     }
 }

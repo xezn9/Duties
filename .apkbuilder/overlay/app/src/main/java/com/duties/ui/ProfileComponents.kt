@@ -169,7 +169,7 @@ fun OrangePill(
             .bounceClick(enabled = enabled, onClick = onClick)
             .height(height)
             .clip(shape)
-            .background(Brush.verticalGradient(listOf(Color(0xFFDB7608), Color(0xFFC25E00))))
+            .background(Brush.verticalGradient(listOf(AppAccent.deep(Color(0xFFDB7608)), AppAccent.deep(Color(0xFFC25E00), extra = 0.12f))))
             .border(1.dp, Color(0xFFF0A95A).copy(alpha = 0.55f), shape)
             .padding(horizontal = 22.dp),
         verticalAlignment = Alignment.CenterVertically,

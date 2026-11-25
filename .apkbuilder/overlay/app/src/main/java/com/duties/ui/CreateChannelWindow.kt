@@ -138,8 +138,8 @@ import kotlin.math.sin
  * Everything is driven by ONE number p (read in the draw phase, so nothing recomposes while it moves).
  */
 
-private val WIN_ORANGE = Color(0xFFDB7608)
-private val WIN_ORANGE_SOFT = Color(0xFFFF8A1F)
+private val WIN_ORANGE: Color get() = AppAccent.deep(Color(0xFFDB7608))
+private val WIN_ORANGE_SOFT: Color get() = AppAccent.pick(Color(0xFFFF8A1F))
 private val WIN_VIOLET = Color(0xFF8A5CFF)
 private val WIN_MINT = Color(0xFF00D4AA)
 
@@ -690,7 +690,7 @@ private fun ChannelPhoto(photo: Bitmap?, dark: Boolean, onClick: () -> Unit) {
                 .size(40.dp)
                 .graphicsLayer { scaleX = pulse; scaleY = pulse }
                 .clip(CircleShape)
-                .background(Color(0xFFCC6A00))
+                .background(AppAccent.deep(Color(0xFFCC6A00)))
                 .border(2.5.dp, Color.White, CircleShape),
             contentAlignment = Alignment.Center
         ) { GlyphIcon(if (photo == null) R.drawable.ic_plus else R.drawable.ic_edit, Color.White, 22.dp) }

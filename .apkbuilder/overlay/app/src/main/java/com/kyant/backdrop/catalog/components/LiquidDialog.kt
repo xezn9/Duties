@@ -1,5 +1,6 @@
 package com.kyant.backdrop.catalog.components
 
+import com.duties.ui.AppAccent
 import com.duties.ui.GlassTheme
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -54,7 +55,7 @@ fun LiquidDialog(
     confirmText: String,
     dismissText: String,
     onConfirm: () -> Unit,
-    confirmTint: Color = Color(0xFF0088FF),
+    confirmTint: Color = AppAccent.pick(Color(0xFF0088FF)),
     modifier: Modifier = Modifier
 ) {
     BackHandler(enabled = visible, onBack = onDismiss)

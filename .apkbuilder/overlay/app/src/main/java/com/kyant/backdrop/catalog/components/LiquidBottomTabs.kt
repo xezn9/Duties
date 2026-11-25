@@ -1,5 +1,6 @@
 package com.kyant.backdrop.catalog.components
 
+import com.duties.ui.AppAccent
 import com.duties.ui.GlassTheme
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.EaseOut
@@ -80,9 +81,10 @@ fun LiquidBottomTabs(
     content: @Composable RowScope.() -> Unit
 ) {
     val isLightTheme = !darkTheme
-    val accentColor =
+    val accentColor = AppAccent.pick(
         if (isLightTheme) Color(0xFF0088FF)
         else Color(0xFF0091FF)
+    )
     val containerColor =
         if (isLightTheme) Color(0xFFFAFAFA).copy(0.4f)
         else Color(0xFF2A2A2E).copy(0.16f)   // thin tint: the page behind must show through

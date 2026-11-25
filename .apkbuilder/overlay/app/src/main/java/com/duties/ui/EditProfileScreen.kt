@@ -453,7 +453,7 @@ internal fun LiquidScene(dark: Boolean, banner: Bitmap?, content: @Composable (B
 @Composable
 private fun SaveButton(backdrop: Backdrop, enabled: Boolean, saving: Boolean, done: Boolean, onClick: () -> Unit) {
     val container by animateColorAsState(
-        if (done) Color(0xFF30D158).copy(alpha = 0.85f) else Color(0xFFCC6A00).copy(alpha = 0.85f),
+        if (done) Color(0xFF30D158).copy(alpha = 0.85f) else AppAccent.deep(Color(0xFFCC6A00)).copy(alpha = 0.85f),
         tween(250), label = "saveColor"
     )
     GlassSurface(

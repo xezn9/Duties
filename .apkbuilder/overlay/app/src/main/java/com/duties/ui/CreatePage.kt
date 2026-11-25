@@ -114,7 +114,7 @@ import kotlinx.coroutines.launch
 private val REQUIRED_COLOR = Color(0xFFFF8A00)
 private val OPTIONAL_COLOR = Color(0xFF2BD9A0)
 private val GUIDE_COLOR = Color(0xFF3D7BFF)
-private val BUTTON_ORANGE = Color(0xFFDB7608)
+private val BUTTON_ORANGE: Color get() = AppAccent.deep(Color(0xFFDB7608))
 
 private val RING = listOf(
     Color(0xFFFF8A00), Color(0xFF2BD9A0), Color(0xFF00C2FF),
@@ -1023,7 +1023,7 @@ private fun PhotoHero(dark: Boolean) {
                     scaleY = pulse.value
                 }
                 .clip(CircleShape)
-                .background(Color(0xFFCC6A00))
+                .background(AppAccent.deep(Color(0xFFCC6A00)))
                 .border(2.5.dp, Color.White, CircleShape),
             contentAlignment = Alignment.Center
         ) { GlyphIcon(R.drawable.ic_plus, Color.White, 24.dp) }

@@ -110,7 +110,7 @@ import kotlinx.coroutines.launch
 // Constants copied from HyperSpring's Motion.java / PushMorph.java / TabReveal.java
 
 /** Accent color (Motion.ACCENT). */
-val ACCENT = Color(0xFFFF5F45)
+val ACCENT: Color get() = AppAccent.pick(Color(0xFFFF5F45))
 
 /** PathInterpolator(0.2, 0, 0, 1): "SETTLE" in PushMorph, "EASE" in Motion. */
 val SETTLE = CubicBezierEasing(0.2f, 0f, 0f, 1f)
