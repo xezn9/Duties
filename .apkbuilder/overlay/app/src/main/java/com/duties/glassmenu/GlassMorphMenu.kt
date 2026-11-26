@@ -26,6 +26,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -41,6 +42,8 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
@@ -101,6 +104,9 @@ object MorphSpec {
 private val PI_F = PI.toFloat()
 private fun lerpF(a: Float, b: Float, t: Float) = a + (b - a) * t
 
+/** never let NaN / Infinity reach layout */
+private fun Float.safe(default: Float = 0f) = if (isNaN() || isInfinite()) default else this
+
 /** all values in dp, in the container's coordinate space */
 private class MorphGeometry(
     val left: Float,
@@ -125,7 +131,8 @@ private fun morphGeometry(p: Float): MorphGeometry {
 
     val pc = p.coerceAtLeast(0f)
     val p01 = pc.coerceIn(0f, 1f)
-    val bump = sin(PI_F * p01).pow(1.5f)
+    // sin(PI_F) is slightly NEGATIVE in Float -> negative.pow(1.5f) = NaN -> roundToInt() crash
+    val bump = sin(PI_F * p01).coerceAtLeast(0f).pow(1.5f)
     val lead = pc + 0.5f * p01 * (1f - p01) // bottom edge leads: the drop falls first
 
     val left = lerpF(cx - br, panelL, pc)
@@ -133,12 +140,15 @@ private fun morphGeometry(p: Float): MorphGeometry {
     val right = lerpF(cx + br, panelR, pc) - s.RightPull.value * bump
     val bottom = lerpF(cy + br, panelB, lead)
 
-    val w = right - left
-    val h = bottom - top
-    val corner = min(lerpF(br, s.PanelCorner.value, p01), min(w, h) / 2f).coerceAtLeast(1f)
+    val w = (right - left).safe(1f)
+    val h = (bottom - top).safe(1f)
+    val corner = min(lerpF(br, s.PanelCorner.value, p01), min(w, h) / 2f).safe(br).coerceAtLeast(1f)
 
-    val rd = if (p01 < 0.08f || pc >= 0.92f) 0f else br * (1f - pc)
-    return MorphGeometry(left, top, right, bottom, corner, cx, cy, rd)
+    val rd = if (p01 < 0.08f || pc >= 0.92f) 0f else (br * (1f - pc)).safe(0f)
+    return MorphGeometry(
+        left.safe(cx - br), top.safe(cy - br), right.safe(cx + br), bottom.safe(cy + br),
+        corner, cx, cy, rd,
+    )
 }
 
 @Composable
@@ -150,6 +160,7 @@ fun GlassMorphMenu(
     buttonContent: @Composable () -> Unit = { DefaultAvatarIcon() },
     menuContent: @Composable ColumnScope.() -> Unit,
 ) {
+    val outerDirection = LocalLayoutDirection.current
     val spec = MorphSpec
     val anim = remember { Animatable(0f) }
     LaunchedEffect(expanded) {
@@ -166,6 +177,9 @@ fun GlassMorphMenu(
     val pressed by interaction.collectIsPressedAsState()
     val pressAlpha by animateFloatAsState(if (pressed) 0.14f else 0f, tween(80), label = "press")
 
+    // the morph geometry is absolute (button on the physical right) -> always lay it out LTR,
+    // so it behaves the same on Arabic / RTL phones
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
     Box(
         modifier = modifier.size(
             width = spec.PadStart + spec.PanelWidth + spec.PadEnd,
@@ -223,7 +237,10 @@ fun GlassMorphMenu(
                             renderEffect = if (blurPx > 0.5f) BlurEffect(blurPx, blurPx, TileMode.Decal) else null
                         }
                         .padding(vertical = 12.dp),
-                ) { menuContent() }
+                ) {
+                    // menu rows follow the app's real layout direction (Arabic rows stay RTL)
+                    CompositionLocalProvider(LocalLayoutDirection provides outerDirection) { menuContent() }
+                }
             }
         }
 
@@ -278,6 +295,7 @@ fun GlassMorphMenu(
                 buttonContent()
             }
         }
+    }
     }
 }
 

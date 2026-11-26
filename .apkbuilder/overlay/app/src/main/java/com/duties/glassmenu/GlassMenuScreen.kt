@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -25,6 +26,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,8 +36,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kyant.backdrop.backdrops.layerBackdrop
@@ -52,6 +56,14 @@ private val CardBrushes = listOf(
 
 @Composable
 fun GlassMenuScreen() {
+    // demo screen is designed LTR (button on the physical top-right) even on Arabic phones
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+        GlassMenuScreenContent()
+    }
+}
+
+@Composable
+private fun GlassMenuScreenContent() {
     // everything that should be visible THROUGH the glass is drawn inside the layerBackdrop box
     val backdrop = rememberLayerBackdrop()
     var expanded by remember { mutableStateOf(false) }
@@ -122,10 +134,12 @@ private fun Section(title: String, brushOffset: Int) {
         style = TextStyle(color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold),
     )
     Row(
-        modifier = Modifier.padding(horizontal = 20.dp),
+        modifier = Modifier
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp),
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        repeat(3) { i ->
+        repeat(5) { i ->
             Column {
                 Box(
                     Modifier
