@@ -598,7 +598,7 @@ private fun FormContent(
  * and shown with [strength] (0..1, read while drawing, so it follows the scroll without recomposing).
  */
 @Composable
-private fun FogBand(
+internal fun FogBand(
     backdrop: Backdrop,
     blurRadius: Dp,
     strength: () -> Float,

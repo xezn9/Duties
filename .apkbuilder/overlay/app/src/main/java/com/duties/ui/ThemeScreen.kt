@@ -1,5 +1,18 @@
 package com.duties.ui
 
+import android.app.Activity
+import android.content.ContextWrapper
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
@@ -24,7 +37,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -42,6 +54,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -69,6 +82,29 @@ fun ThemeScreen(dark: Boolean, onClose: () -> Unit) {
     val context = LocalContext.current
     val fg = if (dark) Color.White else Color(0xFF101114)
 
+    // full screen: the status bar is hidden while this page is open (a swipe from the top still shows it for a moment)
+    val view = LocalView.current
+    DisposableEffect(view) {
+        val window = generateSequence(view.context) { (it as? ContextWrapper)?.baseContext }
+            .filterIsInstance<Activity>().firstOrNull()?.window
+        val controller = window?.let { WindowCompat.getInsetsController(it, view) }
+        val oldBehavior = controller?.systemBarsBehavior
+        controller?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        controller?.hide(WindowInsetsCompat.Type.statusBars())
+        onDispose {
+            controller?.show(WindowInsetsCompat.Type.statusBars())
+            if (controller != null && oldBehavior != null) controller.systemBarsBehavior = oldBehavior
+        }
+    }
+
+    // fog at the top (copied from the Create form): what scrolls up gets blurred and melts away up to the top edge
+    val density = LocalDensity.current
+    val cutoutTop = WindowInsets.displayCutout.asPaddingValues().calculateTopPadding()
+    val topFog = cutoutTop + 90.dp
+    val rampPx = with(density) { 80.dp.toPx() }   // how far the page has to scroll for the fog to be fully there
+    val scroll = rememberScrollState()
+    val fog = rememberLayerBackdrop()
+
     val glassBackdrop = rememberLayerBackdrop()
     val dots = rememberDotsState()
     val origin = LocalPushOrigin.current
@@ -93,14 +129,35 @@ fun ThemeScreen(dark: Boolean, onClose: () -> Unit) {
         Box(Modifier.fillMaxSize().layerBackdrop(glassBackdrop)) {
             DotBackground(dots, dark)
         }
+        Box(Modifier.fillMaxSize().navigationBarsPadding()) {
         Column(
             Modifier
                 .fillMaxSize()
-                .statusBarsPadding()
-                .navigationBarsPadding()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 10.dp)
+                .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                .drawWithContent {
+                    drawContent()
+                    // top: what scrolls up melts away, all the way to the top edge of the screen
+                    // (only once the page was scrolled, so everything is sharp at rest)
+                    val th = topFog.toPx()
+                    val kt = (scroll.value / rampPx).coerceIn(0f, 1f)
+                    drawRect(
+                        brush = Brush.verticalGradient(
+                            0f to Color.Black.copy(alpha = 1f - kt),
+                            0.12f to Color.Black.copy(alpha = 1f - kt),
+                            1f to Color.Black,
+                            startY = 0f,
+                            endY = th
+                        ),
+                        topLeft = Offset.Zero,
+                        size = Size(size.width, th),
+                        blendMode = BlendMode.DstIn
+                    )
+                }
+                .layerBackdrop(fog)
+                .verticalScroll(scroll)
+                .padding(horizontal = 16.dp)
         ) {
+            Spacer(Modifier.height(cutoutTop + 10.dp))
             // ---- top bar: close + title
             Emerge(delayMs = 40, modifier = Modifier.fillMaxWidth()) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -235,6 +292,23 @@ fun ThemeScreen(dark: Boolean, onClose: () -> Unit) {
                 }
             }
             Spacer(Modifier.height(24.dp))
+        }
+        // ---- fog at the top: two blurred copies of the content (soft over the whole length, strong near the top edge)
+        val topStrength: () -> Float = { (scroll.value / rampPx).coerceIn(0f, 1f) }
+        FogBand(
+            backdrop = fog,
+            blurRadius = 5.dp,
+            strength = topStrength,
+            stops = arrayOf(0f to Color.Transparent, 0.2f to Color.Black, 0.85f to Color.Black.copy(alpha = 0.25f), 1f to Color.Transparent),
+            modifier = Modifier.align(Alignment.TopCenter).height(topFog)
+        )
+        FogBand(
+            backdrop = fog,
+            blurRadius = 14.dp,
+            strength = topStrength,
+            stops = arrayOf(0f to Color.Transparent, 0.3f to Color.Black, 1f to Color.Transparent),
+            modifier = Modifier.align(Alignment.TopCenter).height(topFog * 0.55f)
+        )
         }
     }
 }
