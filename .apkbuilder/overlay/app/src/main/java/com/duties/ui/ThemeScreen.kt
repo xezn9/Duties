@@ -45,6 +45,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.duties.R
@@ -206,20 +207,13 @@ fun ThemeScreen(dark: Boolean, onClose: () -> Unit) {
                         style = TextStyle(color = fg.copy(alpha = 0.55f), fontSize = 12.sp)
                     )
                     Spacer(Modifier.height(14.dp))
-                    AppAccent.swatches.chunked(5).forEachIndexed { row, items ->
-                        if (row > 0) Spacer(Modifier.height(12.dp))
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            items.forEachIndexed { col, swatch ->
-                                val i = row * 5 + col
-                                ColorDot(
-                                    color = swatch.color,
-                                    selected = AppAccent.index == i,
-                                    fg = fg,
-                                    onClick = { AppAccent.index = i }
-                                )
-                            }
-                        }
-                    }
+                    AppColorWheel(dark = dark, fg = fg)
+                    Spacer(Modifier.height(6.dp))
+                    BasicText(
+                        stringResource(R.string.app_color_wheel_hint),
+                        modifier = Modifier.fillMaxWidth(),
+                        style = TextStyle(color = fg.copy(alpha = 0.55f), fontSize = 12.sp, textAlign = TextAlign.Center)
+                    )
                     Spacer(Modifier.height(16.dp))
                     GlassSurface(
                         backdrop = glassBackdrop,
@@ -241,33 +235,6 @@ fun ThemeScreen(dark: Boolean, onClose: () -> Unit) {
                 }
             }
             Spacer(Modifier.height(24.dp))
-        }
-    }
-}
-
-/** One round color. The chosen one gets a ring around it and a check mark on it. */
-@Composable
-private fun ColorDot(color: Color, selected: Boolean, fg: Color, onClick: () -> Unit) {
-    val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
-    val scale by animateFloatAsState(
-        targetValue = if (pressed) 0.88f else 1f,
-        animationSpec = spring(dampingRatio = 0.5f, stiffness = 400f),
-        label = "colorDot"
-    )
-    Box(
-        Modifier
-            .size(48.dp)
-            .graphicsLayer { scaleX = scale; scaleY = scale }
-            .border(2.5.dp, if (selected) fg else Color.Transparent, CircleShape)
-            .padding(4.dp)
-            .clip(CircleShape)
-            .background(color)
-            .clickable(interactionSource = interaction, indication = null, role = Role.Button, onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        if (selected) {
-            GlyphIcon(R.drawable.ic_check, if (color.luminance() > 0.55f) Color(0xFF101114) else Color.White, 20.dp)
         }
     }
 }

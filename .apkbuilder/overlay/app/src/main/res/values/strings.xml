@@ -55,6 +55,7 @@
     <string name="glass_dispersion">تقزّح الألوان</string>
     <string name="app_color_title">لون التطبيق</string>
     <string name="app_color_hint">يغيّر ألوان التابات والأزرار والنقاط بكل التطبيق</string>
+    <string name="app_color_wheel_hint">لفّ الدولاب واضغط على اللون اللي بالنص عشان تطبّقه</string>
     <string name="app_color_original">اللون الأصلي</string>
     <string name="glass_dispersion_hint">ألوان قوس قزح على حافة الانكسار</string>
     <string name="logout">تسجيل خروج</string>
