@@ -51,6 +51,8 @@ private val LogoutRedDark = Color(0xFFFF453A)
 private val LogoutRedLight = Color(0xFFE5342B)
 private val ThemeTintDark = Color(0xFF64D2FF)
 private val ThemeTintLight = Color(0xFF0A84FF)
+private val NotifTintDark = Color(0xFFFFB340)
+private val NotifTintLight = Color(0xFFFF9500)
 
 /**
  * Settings page. It is opened with PushStack from the menu button of the Account tab, so it grows out of
@@ -85,6 +87,7 @@ private fun SettingsMain(dark: Boolean, onClose: () -> Unit, onTheme: (Rect?) ->
     val fg = if (dark) Color.White else Color(0xFF101114)
     val red = if (dark) LogoutRedDark else LogoutRedLight
     val themeTint = AppAccent.pick(if (dark) ThemeTintDark else ThemeTintLight)
+    val notifTint = if (dark) NotifTintDark else NotifTintLight
 
     // Records the WHOLE page, so the dialog's glass refracts everything behind it.
     val screenBackdrop = rememberLayerBackdrop()
@@ -156,8 +159,25 @@ private fun SettingsMain(dark: Boolean, onClose: () -> Unit, onTheme: (Rect?) ->
 
                 Spacer(Modifier.height(12.dp))
 
+                // ---- Notifications (empty for now: nothing opens yet)
+                Emerge(delayMs = 140, modifier = Modifier.fillMaxWidth()) {
+                    SettingsRow(
+                        bd = glassBackdrop,
+                        dark = dark,
+                        icon = R.drawable.ic_notifications,
+                        tint = notifTint,
+                        title = stringResource(R.string.notifications_title),
+                        subtitle = stringResource(R.string.notifications_row_hint),
+                        titleColor = fg,
+                        subtitleColor = fg.copy(alpha = 0.6f),
+                        chevron = true
+                    ) { /* empty for now */ }
+                }
+
+                Spacer(Modifier.height(12.dp))
+
                 // ---- sign out
-                Emerge(delayMs = 170, modifier = Modifier.fillMaxWidth()) {
+                Emerge(delayMs = 200, modifier = Modifier.fillMaxWidth()) {
                     SettingsRow(
                         bd = glassBackdrop,
                         dark = dark,

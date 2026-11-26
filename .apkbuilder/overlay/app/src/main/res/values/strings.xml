@@ -43,6 +43,8 @@
     <string name="settings_title">الإعدادات</string>
     <string name="settings_subtitle">إعدادات التطبيق والحساب</string>
     <string name="theme_title">ثيم التطبيق</string>
+    <string name="notifications_title">الإشعارات</string>
+    <string name="notifications_row_hint">إشعارات الرسائل</string>
     <string name="theme_row_hint">التحكم بالزجاج السائل</string>
     <string name="theme_subtitle">تحكم بالزجاج السائل بكل التطبيق</string>
     <string name="glass_title">الزجاج السائل</string>
