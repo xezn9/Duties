@@ -183,12 +183,12 @@ private fun ThemeMain(dark: Boolean, onClose: () -> Unit, onOpenColors: (Rect?) 
             // ---- top bar: close + title
             Emerge(delayMs = 40, modifier = Modifier.fillMaxWidth()) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    GlassSurface(
+                    WhiteLiquidButton(
                         backdrop = glassBackdrop,
-                        container = if (dark) Color(0xFF121212).copy(alpha = 0.40f) else Color.White.copy(alpha = 0.50f),
                         modifier = Modifier.size(48.dp),
+                        horizontalPadding = 0.dp,
                         onClick = onClose
-                    ) { GlyphIcon(R.drawable.ic_close, fg, 22.dp) }
+                    ) { GlyphIcon(R.drawable.ic_close, WhiteButtonInk, 22.dp) }
                     Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
                         BasicText(
                             stringResource(R.string.theme_title),

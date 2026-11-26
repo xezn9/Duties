@@ -85,7 +85,6 @@ import androidx.core.graphics.ColorUtils
 import com.duties.R
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
-import com.kyant.backdrop.catalog.components.LiquidButton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.PI
@@ -131,7 +130,7 @@ private fun AppColorShelf(dark: Boolean, onClose: () -> Unit) {
     val cutoutTop = WindowInsets.displayCutout.asPaddingValues().calculateTopPadding()
 
     // the white buttons (arrows, original color) need dark ink
-    val whiteInk = Color(0xFF101114)
+    val whiteInk = WhiteButtonInk
     // 0..1 while the page is going back (the shelf closes, everything melts toward the row it came from)
     val leave = LocalPushLeave.current
 
@@ -454,29 +453,6 @@ private fun AppColorShelf(dark: Boolean, onClose: () -> Unit) {
             }
         }
     }
-}
-
-/**
- * The white button of this page: the app's LiquidButton (blur + lens + the press / drag stretch) with a white
- * glass. [tint] is white, so it stays white whatever the transparency of the glass theme is.
- */
-@Composable
-private fun WhiteLiquidButton(
-    backdrop: com.kyant.backdrop.Backdrop,
-    modifier: Modifier = Modifier,
-    horizontalPadding: androidx.compose.ui.unit.Dp = 16.dp,
-    onClick: () -> Unit,
-    content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit
-) {
-    LiquidButton(
-        onClick = onClick,
-        backdrop = backdrop,
-        modifier = modifier,
-        tint = Color.White,
-        surfaceColor = Color.White.copy(alpha = 0.40f),
-        horizontalPadding = horizontalPadding,
-        content = content
-    )
 }
 
 // =====================================================================================================
