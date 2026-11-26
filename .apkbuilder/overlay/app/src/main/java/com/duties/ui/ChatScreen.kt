@@ -259,7 +259,7 @@ private fun ChatContent(
     val context = LocalContext.current
 
     val nameNow by rememberUpdatedState(senderName)
-    val chat = remember(channel.id) { ChatState(context.applicationContext, channel.id, uid) { nameNow } }
+    val chat = remember(channel.id) { ChatState(context.applicationContext, channel.id, uid, channel.name) { nameNow } }
     DisposableEffect(chat) {
         chat.start()
         onDispose { chat.stop() }
