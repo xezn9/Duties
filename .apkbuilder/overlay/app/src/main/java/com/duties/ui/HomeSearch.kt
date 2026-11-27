@@ -135,44 +135,57 @@ private const val REF_PILL_H = 132f
 private const val REF_PILL_CY = 222f
 
 /**
- * How the button is squeezed by the animation: [sx, sy, translationY in px].
- * Opening: the press (shrinks, a little lower) then it springs back. Closing: when the drop has merged into it, it
- * overshoots (a bit narrow + tall + higher) and settles. Same numbers as the pill of the original animation.
+ * What the animation does to the button (the "pill" of the original): [scaleX, scaleY, translationX, translationY, alpha].
+ * Opening: the pill is pressed (squash), then IT BECOMES the drop (the glass takes over at its place) and the button
+ * comes back (as the X) when the drop has left. Closing: the drop melts back; the button is born again as a small bud
+ * (same bud rect / alpha as the original), grows into the pill, overshoots and settles.
  */
-private fun buttonSquash(morph: SearchMorph, btnHPx: Float): FloatArray {
+private fun buttonMorph(morph: SearchMorph, btnWPx: Float, btnHPx: Float): FloatArray {
     val ph = morph.phase
-    if (ph != Phase.Opening && ph != Phase.Closing) return floatArrayOf(1f, 1f, 0f)
+    if (ph != Phase.Opening && ph != Phase.Closing) return floatArrayOf(1f, 1f, 0f, 0f, 1f)
     val t = morph.clock.value
     val f = frameFor(ph, t)
     val p = f.pill
-    var sx = 1f
-    var sy = 1f
-    var dy = 0f
+    val kx = btnWPx / REF_PILL_W
+    val ky = btnHPx / REF_PILL_H
     if (ph == Phase.Opening) {
-        if (f.pillShape && p != null) {
-            sx = (p[2] - p[0]) / REF_PILL_W
-            sy = (p[3] - p[1]) / REF_PILL_H
-            dy = (p[1] + p[3]) / 2f - REF_PILL_CY
-        } else {
-            val w = 1f - smooth01((t - 0.084f) / 0.09f)     // released: back to normal
-            sx = 1f + (0.883f - 1f) * w
-            sy = 1f + (0.977f - 1f) * w
-            dy = 5.5f * w
+        if (f.pillShape && p != null) {                       // pressed
+            return floatArrayOf(
+                (p[2] - p[0]) / REF_PILL_W, (p[3] - p[1]) / REF_PILL_H,
+                0f, ((p[1] + p[3]) / 2f - REF_PILL_CY) * ky, 1f
+            )
         }
-    } else if (p != null) {
-        val w = smooth01((t - 0.20f) / 0.083f)
-        sx = 1f + ((p[2] - p[0]) / REF_PILL_W - 1f) * w
-        sy = 1f + ((p[3] - p[1]) / REF_PILL_H - 1f) * w
-        dy = ((p[1] + p[3]) / 2f - REF_PILL_CY) * w
+        if (t < 0.16f) {                                      // it turns into the drop
+            val a = 1f - smooth01((t - 0.075f) / 0.06f)
+            return floatArrayOf(0.883f, 0.977f, 0f, 5.5f * ky, a)
+        }
+        val r = smooth01((t - 0.16f) / 0.14f)                 // the button comes back
+        val sc = 0.6f + 0.4f * r
+        return floatArrayOf(sc, sc, 0f, 0f, r)
     }
-    return floatArrayOf(sx, sy, dy * btnHPx / REF_PILL_H)
+    if (p == null) {                                          // closing, before the bud: gone
+        return floatArrayOf(1f, 1f, 0f, 0f, 1f - smooth01(t / 0.04f))
+    }
+    return floatArrayOf(
+        (p[2] - p[0]) / REF_PILL_W, (p[3] - p[1]) / REF_PILL_H,
+        ((p[0] + p[2]) / 2f - 366.5f) * kx, ((p[1] + p[3]) / 2f - REF_PILL_CY) * ky,
+        f.pillAlpha
+    )
 }
+
+/** Pill rect of the animation (reference px) -> rect on this screen, relative to the button. */
+private fun mapPill(p: FloatArray, rest: Rect): Rect = Rect(
+    rest.left + (p[0] - 216f) / REF_PILL_W * rest.width,
+    rest.top + (p[1] - 156f) / REF_PILL_H * rest.height,
+    rest.left + (p[2] - 216f) / REF_PILL_W * rest.width,
+    rest.top + (p[3] - 156f) / REF_PILL_H * rest.height
+)
 
 /**
  * Round liquid glass button (same glass as the other buttons of the app).
  * It pops in with a spring while it turns a quarter; when the search opens the magnifier turns and shrinks away while
  * a X turns in from the other side (and back when it closes). On top of that it plays the pill part of the morph
- * animation (press squash / overshoot), see [buttonSquash].
+ * animation (press, becomes the drop, comes back), see [buttonMorph].
  */
 @Composable
 internal fun HomeSearchButton(
@@ -197,11 +210,12 @@ internal fun HomeSearchButton(
             .onGloballyPositioned { morph.buttonBounds = it.boundsInRoot() }
             .graphicsLayer {
                 val e = enter.value
-                val sq = buttonSquash(morph, 48.dp.toPx())
+                val sq = buttonMorph(morph, 48.dp.toPx(), 48.dp.toPx())
                 scaleX = e * sq[0]
                 scaleY = e * sq[1]
-                translationY = sq[2]
-                alpha = (e * 2.2f).coerceIn(0f, 1f)
+                translationX = sq[2]
+                translationY = sq[3]
+                alpha = (e * 2.2f).coerceIn(0f, 1f) * sq[4]
                 rotationZ = (1f - e) * -70f
             }
     ) {
@@ -374,14 +388,17 @@ private fun SearchContent(
                 val fin = Rect(padH, fTop, layerSize.width - padH, fTop + fieldH)
 
                 // ---- the morphing glass: drop -> field (and back), with the text blurred in / out
-                SearchMorphLayer(
-                    morph = morph, rest = rest, fin = fin, u = layerSize.width / 1080f,
-                    dark = dark, backdrop = backdrop,
-                    query = query, onQuery = { query = it },
-                    textColor = textColor, subColor = subColor,
-                    onSearchKey = { focus.clearFocus() },
-                    fr = fr
-                )
+                // (absolute pixel geometry: it must be laid out LTR, in RTL "TopStart" is the right edge)
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                    SearchMorphLayer(
+                        morph = morph, rest = rest, fin = fin, u = layerSize.width / 1080f,
+                        dark = dark, backdrop = backdrop,
+                        query = query, onQuery = { query = it },
+                        textColor = textColor, subColor = subColor,
+                        onSearchKey = { focus.clearFocus() },
+                        fr = fr
+                    )
+                }
 
                 // ---- the answer: a short message, or the channels that were found
                 val topPad = with(density) { (fin.bottom + 2.dp.toPx()).toDp() }
@@ -491,14 +508,15 @@ private fun SearchMorphLayer(
                 alpha = gw
             }
         ) {
-            drawRoundRect(Color.White, rest.topLeft, rest.size, CornerRadius(min(rest.width, rest.height) / 2f))
+            val bud = f.pill?.let { mapPill(it, rest) } ?: rest
+            drawRoundRect(Color.White, bud.topLeft, bud.size, CornerRadius(min(bud.width, bud.height) / 2f))
             drawRoundRect(Color.White, body.topLeft, body.size, CornerRadius(min(body.width, body.height) / 2f))
         }
     }
 
     // 2) the glass
     val bodyAlpha = when (phase) {
-        Phase.Opening -> smooth01((t - 0.084f) / 0.03f)
+        Phase.Opening -> smooth01((t - 0.084f) / 0.05f)
         Phase.Closing -> 1f - smooth01((t - 0.235f) / 0.048f)
         else -> 1f
     }
@@ -534,6 +552,7 @@ private fun SearchMorphLayer(
                         }
                     }
             ) {
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
                 Row(
                     Modifier.fillMaxSize().padding(horizontal = 18.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -560,6 +579,7 @@ private fun SearchMorphLayer(
                             modifier = Modifier.fillMaxWidth().focusRequester(fr)
                         )
                     }
+                }
                 }
             }
         }
