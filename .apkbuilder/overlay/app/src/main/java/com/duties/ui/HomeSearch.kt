@@ -314,6 +314,10 @@ private val LightCard = Color(0xFFF2F2F7)
 /** Distance between the corner of the card and the button (the X) that sits inside it. */
 private val CARD_INSET = 14.dp
 
+/** Sticky neck while opening: blur of the metaball filter (bigger = a longer, thicker neck) and when it is gone (clock). */
+private const val OPEN_NECK_BLUR = 14f
+private const val OPEN_NECK_END = 0.26f
+
 /** Gap between the title row (the button's rest place) and the top of the card. */
 private val CARD_GAP = 10.dp
 
@@ -482,14 +486,23 @@ private fun SearchMorphLayer(
     val g = f.bodyGray / 255f
     val bodyColor = if (dark) Color(g, g, g) else LightCard
 
-    // 1) pill + card, merged by the gooey filter while closing
+    // 1) pill + card, merged by the gooey filter (metaball): while closing (as in the original) and, new, while the drop
+    //    leaves the button: a rest blob of the button stays behind and fades, so a sticky neck stretches and snaps.
     val goo = remember(u) { if (Build.VERSION.SDK_INT >= 31) gooEffect(9f * u) else null }
+    val gooOpen = remember(u) { if (Build.VERSION.SDK_INT >= 31) gooEffect(OPEN_NECK_BLUR * u) else null }
+    val openNeck = phase == Phase.Opening && t >= 0.084f && t <= OPEN_NECK_END
+    val gooNow = if (openNeck) gooOpen else goo
     Canvas(
         Modifier.fillMaxSize().graphicsLayer {
             compositingStrategy = CompositingStrategy.Offscreen
-            if (f.goo) renderEffect = goo
+            if (f.goo || openNeck) renderEffect = gooNow
         }
     ) {
+        if (openNeck) {
+            val a = 1f - smooth01((t - 0.084f) / (OPEN_NECK_END - 0.084f))
+            val r = mapPill(floatArrayOf(232f, 163f, 498f, 292f), rest)      // the pressed button = where the drop is born
+            drawRoundRect(bodyColor.copy(alpha = a), r.topLeft, r.size, CornerRadius(min(r.width, r.height) / 2f))
+        }
         if (phase == Phase.Closing && f.goo) {
             f.pill?.let { p ->
                 val r = mapPill(p, rest)
