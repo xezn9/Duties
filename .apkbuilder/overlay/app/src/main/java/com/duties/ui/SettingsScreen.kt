@@ -1,5 +1,6 @@
 package com.duties.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -87,7 +88,6 @@ private fun SettingsMain(dark: Boolean, onClose: () -> Unit, onTheme: (Rect?) ->
     val fg = if (dark) Color.White else Color(0xFF101114)
     val red = if (dark) LogoutRedDark else LogoutRedLight
     val themeTint = AppAccent.pick(if (dark) ThemeTintDark else ThemeTintLight)
-    val notifTint = if (dark) NotifTintDark else NotifTintLight
 
     // Records the WHOLE page, so the dialog's glass refracts everything behind it.
     val screenBackdrop = rememberLayerBackdrop()
@@ -100,6 +100,10 @@ private fun SettingsMain(dark: Boolean, onClose: () -> Unit, onTheme: (Rect?) ->
 
     var showLogout by remember { mutableStateOf(false) }
     var signingOut by remember { mutableStateOf(false) }
+    // the notifications card (liquid morph of the bell button); back closes it
+    var notifOpen by remember { mutableStateOf(false) }
+    val notifMorph = remember { SearchMorph() }
+    BackHandler(enabled = notifOpen) { notifOpen = false }
     val themeRow = remember { arrayOfNulls<LayoutCoordinates>(1) }
 
     Box(Modifier.fillMaxSize()) {
@@ -160,24 +164,7 @@ private fun SettingsMain(dark: Boolean, onClose: () -> Unit, onTheme: (Rect?) ->
 
                 Spacer(Modifier.height(12.dp))
 
-                // ---- Notifications (empty for now: nothing opens yet)
-                Emerge(delayMs = 140, modifier = Modifier.fillMaxWidth()) {
-                    SettingsRow(
-                        bd = glassBackdrop,
-                        dark = dark,
-                        icon = R.drawable.ic_notifications,
-                        tint = notifTint,
-                        title = stringResource(R.string.notifications_title),
-                        subtitle = stringResource(R.string.notifications_row_hint),
-                        titleColor = fg,
-                        subtitleColor = fg.copy(alpha = 0.6f),
-                        chevron = true
-                    ) { /* empty for now */ }
-                }
-
-                Spacer(Modifier.height(12.dp))
-
-                // ---- sign out
+                // ---- sign out (the notifications are now the small bell button of the top bar, see below)
                 Emerge(delayMs = 200, modifier = Modifier.fillMaxWidth()) {
                     SettingsRow(
                         bd = glassBackdrop,
@@ -193,6 +180,33 @@ private fun SettingsMain(dark: Boolean, onClose: () -> Unit, onTheme: (Rect?) ->
                 }
             }
         }
+
+        // ---- notifications: a small liquid glass button on the LEFT of the top bar. It plays the same morph as the
+        // search button of Home: the card (permissions, battery, links) is born from it and the bell turns into the X.
+        // The card is over the page and UNDER the button (the button becomes the X inside the card).
+        MorphPanel(
+            visible = notifOpen,
+            dark = dark,
+            morph = notifMorph,
+            icon = R.drawable.ic_notifications,
+            mirrored = true,
+            onDismiss = { notifOpen = false }
+        ) { NotificationsCard(dark) }
+        HomeSearchButton(
+            open = notifOpen,
+            dark = dark,
+            backdrop = glassBackdrop,
+            morph = notifMorph,
+            onClick = { notifOpen = !notifOpen },
+            delayMs = 160,
+            icon = R.drawable.ic_notifications,
+            mirrored = true,
+            // this page is laid out right-to-left, so "end" is the left side (the close button is at the start = right)
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .statusBarsPadding()
+                .padding(top = 10.dp, end = 16.dp)
+        )
 
         // The dialog is OUTSIDE the box that is recorded (as the LiquidDialog README says).
         LiquidDialog(

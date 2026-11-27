@@ -4,6 +4,8 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Android 13+: needed to show notifications (asked after login) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- lets the notifications page ask "do not optimize the battery for this app" (so the push service is not killed) -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- only Android 9 and older need this to save a picture to the gallery -->
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
@@ -26,6 +28,17 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Links of the push Worker open in the app. The host must be the same as PushConfig.WORKER_URL (Push.kt).
+                 On Android 12+ the user turns it on in "Open by default" (the notifications page of the settings leads there). -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="autumn-mouse-f769.hesenein12345678.workers.dev" />
             </intent-filter>
         </activity>
 

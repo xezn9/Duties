@@ -175,7 +175,7 @@ private const val REF_PILL_CY = 222f
  * comes back (as the X) when the drop has left. Closing: the drop melts back; the button is born again as a small bud
  * (same bud rect / alpha as the original), grows into the pill, overshoots and settles.
  */
-private fun buttonMorph(morph: SearchMorph, btnWPx: Float, btnHPx: Float, dropPx: Float): FloatArray {
+private fun buttonMorph(morph: SearchMorph, btnWPx: Float, btnHPx: Float, dropPx: Float, mirror: Float = 1f): FloatArray {
     val ph = morph.phase
     // open: the X sits inside the card, which hangs below the title row, so it is [dropPx] lower than the rest place
     if (ph != Phase.Opening && ph != Phase.Closing) return floatArrayOf(1f, 1f, 0f, if (ph == Phase.Open) dropPx else 0f, 1f)
@@ -201,7 +201,7 @@ private fun buttonMorph(morph: SearchMorph, btnWPx: Float, btnHPx: Float, dropPx
     }
     return floatArrayOf(
         (p[2] - p[0]) / REF_PILL_W, (p[3] - p[1]) / REF_PILL_H,
-        ((p[0] + p[2]) / 2f - 366.5f) * kx, ((p[1] + p[3]) / 2f - REF_PILL_CY) * ky,
+        ((p[0] + p[2]) / 2f - 366.5f) * kx * mirror, ((p[1] + p[3]) / 2f - REF_PILL_CY) * ky,
         f.pillAlpha
     )
 }
@@ -228,7 +228,11 @@ internal fun HomeSearchButton(
     morph: SearchMorph,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    delayMs: Int = 0
+    delayMs: Int = 0,
+    /** The icon of the closed button (the magnifier for the search, the bell for the notifications...). */
+    icon: Int = R.drawable.ic_search,
+    /** The button is on the LEFT of the screen: its panel opens to the right (see [MorphPanel]). */
+    mirrored: Boolean = false
 ) {
     val enter = remember { Animatable(0f) }
     LaunchedEffect(Unit) {
@@ -268,7 +272,10 @@ internal fun HomeSearchButton(
             .onGloballyPositioned { morph.buttonBounds = it.boundsInRoot() }
             .graphicsLayer {
                 val e = enter.value
-                val sq = buttonMorph(morph, 48.dp.toPx(), 48.dp.toPx(), 48.dp.toPx() + (CARD_GAP + CARD_INSET).toPx())
+                val sq = buttonMorph(
+                    morph, 48.dp.toPx(), 48.dp.toPx(), 48.dp.toPx() + (CARD_GAP + CARD_INSET).toPx(),
+                    if (mirrored) -1f else 1f
+                )
                 scaleX = e * sq[0]
                 scaleY = e * sq[1]
                 translationX = sq[2]
@@ -287,7 +294,7 @@ internal fun HomeSearchButton(
             // both icons sit on the same spot
             Box(Modifier.requiredSize(22.dp)) {
                 GlyphIcon(
-                    R.drawable.ic_search, menuInk(dark), 22.dp,
+                    icon, menuInk(dark), 22.dp,
                     Modifier.graphicsLayer {
                         val k = t.coerceIn(0f, 1f)
                         rotationZ = t * 90f
@@ -334,6 +341,61 @@ internal fun HomeSearchPanel(
     }
 }
 
+/**
+ * The same liquid morph layer as the search ([HomeSearchPanel]) for any content: the card grows out of its button
+ * ([HomeSearchButton] with the same [morph]) and [content] is drawn inside it (right-to-left, like the search card).
+ * Keep the first row of [content] free at the corner where the X of the button sits (56dp wide, see [CARD_INSET]).
+ *
+ * [mirrored] = the button is on the LEFT of the screen. The geometry of the animation hangs the card to the left of a
+ * button that sits on the right, so the whole layer is mirrored (and the content is turned back), the card then
+ * opens to the right of the button.
+ */
+@Composable
+internal fun MorphPanel(
+    visible: Boolean,
+    dark: Boolean,
+    morph: SearchMorph,
+    icon: Int,
+    modifier: Modifier = Modifier,
+    mirrored: Boolean = false,
+    onDismiss: () -> Unit = {},
+    content: @Composable () -> Unit
+) {
+    LaunchedEffect(visible) { morph.run(visible) }
+    if (morph.phase == Phase.Closed) return
+    var origin by remember { mutableStateOf<Offset?>(null) }
+    var layerSize by remember { mutableStateOf(IntSize.Zero) }
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+        Box(
+            modifier
+                .fillMaxSize()
+                .onGloballyPositioned {
+                    origin = it.positionInRoot()
+                    layerSize = it.size
+                }
+                // covers the page below; a tap outside the card closes it
+                .pointerInput(Unit) { detectTapGestures { if (morph.phase == Phase.Open) onDismiss() } }
+        ) {
+            val o = origin
+            val btn = morph.buttonBounds
+            if (o != null && layerSize.width > 0 && btn.width > 0f) {
+                val w = layerSize.width.toFloat()
+                var rest = Rect(btn.left - o.x, btn.top - o.y, btn.right - o.x, btn.bottom - o.y)
+                if (mirrored) rest = Rect(w - rest.right, rest.top, w - rest.left, rest.bottom)
+                Box(Modifier.fillMaxSize().graphicsLayer { if (mirrored) scaleX = -1f }) {
+                    SearchMorphLayer(
+                        morph = morph, rest = rest, u = w / REF_W_PX, dark = dark,
+                        screenBottom = layerSize.height.toFloat(),
+                        icon = icon, mirrored = mirrored
+                    ) {
+                        Box(Modifier.fillMaxSize().graphicsLayer { if (mirrored) scaleX = -1f }) { content() }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /** Same as BoxShape of the original: a rounded rect in pixels of the layer. */
 private class SearchClip(
     val l: Float, val t: Float, val r: Float, val b: Float, val radius: Float
@@ -345,7 +407,7 @@ private class SearchClip(
 private val LightCard = Color(0xFFF2F2F7)
 
 /** Distance between the corner of the card and the button (the X) that sits inside it. */
-private val CARD_INSET = 14.dp
+internal val CARD_INSET = 14.dp
 
 /** Blur of the metaball filter while closing (the original uses 9; a bit more = the card sticks to the button earlier). */
 private const val CLOSE_GOO_BLUR = 13f
@@ -499,6 +561,8 @@ private fun SearchMorphLayer(
     u: Float,
     dark: Boolean,
     screenBottom: Float,
+    icon: Int = R.drawable.ic_search,
+    mirrored: Boolean = false,
     content: @Composable (bottomInsetPx: Float) -> Unit
 ) {
     val density = LocalDensity.current
@@ -586,8 +650,11 @@ private fun SearchMorphLayer(
         Box(
             Modifier
                 .absoluteOffset { IntOffset((body.center.x - 11.dp.toPx()).roundToInt(), (body.center.y - 11.dp.toPx()).roundToInt()) }
-                .graphicsLayer { alpha = f.pillContent }
-        ) { GlyphIcon(R.drawable.ic_search, menuInk(dark), 22.dp) }
+                .graphicsLayer {
+                    alpha = f.pillContent
+                    if (mirrored) scaleX = -1f      // the whole layer is mirrored: the icon is turned back
+                }
+        ) { GlyphIcon(icon, menuInk(dark), 22.dp) }
     }
 
     // 2) content of the card, clipped to the animated card shape
