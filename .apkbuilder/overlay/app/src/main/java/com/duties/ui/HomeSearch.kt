@@ -103,6 +103,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.PI
+import kotlin.math.exp
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
@@ -164,6 +165,16 @@ private object MorphTime : MotionDurationScale {
 private const val BTN_HIDDEN_FROM = 0.09f
 private const val BTN_GONE_AT = 0.05f
 
+// inPlace (the button itself is the menu): while closing, the card has shrunk back to the size of the button at
+// INPLACE_BTN_AT and the real button is born exactly there (it fades in until INPLACE_BTN_DONE, then settles with a
+// small overshoot). Before that moment the real button stays invisible, so it never shows up before the menu.
+private const val INPLACE_BTN_AT = 0.27f
+private const val INPLACE_BTN_DONE = 0.30f
+
+// size of the pressed pill (reference px): the card is measured against it, see anchoredBody()
+private const val REF_PRESSED_W = 266f
+private const val REF_PRESSED_H = 129f
+
 // reference size of the pill of the animation (1080 px wide screen)
 private const val REF_PILL_W = 301f
 private const val REF_PILL_H = 132f
@@ -201,6 +212,14 @@ private fun buttonMorph(
         val r = if (inPlace) 0f else smooth01((t - 0.27f) / 0.10f)   // the button comes back (as the X, inside the card)
         val sc = 0.6f + 0.4f * r
         return floatArrayOf(sc, sc, 0f, dropPx, r)
+    }
+    if (inPlace) {
+        // the button is born again only when the card has become the button (not before): same place, same size,
+        // then a small overshoot and settle
+        if (t < INPLACE_BTN_AT) return floatArrayOf(1f, 1f, 0f, 0f, 0f)
+        val q = ((t - INPLACE_BTN_AT) / (CLOSE_T - INPLACE_BTN_AT)).coerceIn(0f, 1f)
+        val sc = 1f + 0.16f * exp(-5f * q) * sin(9.4f * q)
+        return floatArrayOf(sc, sc, 0f, 0f, smooth01((t - INPLACE_BTN_AT) / (INPLACE_BTN_DONE - INPLACE_BTN_AT)))
     }
     if (p == null) {                                          // closing, before the bud: gone
         return floatArrayOf(1f, 1f, 0f, dropPx, if (inPlace) 0f else 1f - smooth01(t / 0.04f))
@@ -559,6 +578,28 @@ private fun SearchContent(
 private const val REF_W_PX = 1080f
 
 /**
+ * inPlace: the card IS the button. Its top and its outer edge stay ON the button; it only grows (down and towards the
+ * inside of the screen) out of the button's own rect and, when closing, shrinks back into exactly that rect.
+ * The size comes from the measured frames of the original (width / height of the card relative to the pressed pill),
+ * so the timing, the overshoot and the settle are the original ones; only the PLACE is different (the original
+ * droplet falls below the pill, here the button itself stretches).
+ * [b] = the frame's card in reference px, or null = the card has already become the button.
+ */
+private fun anchoredBody(b: FloatArray?, phase: Phase, rest: Rect, u: Float): Rect {
+    val start = if (phase == Phase.Opening) mapPill(floatArrayOf(232f, 163f, 498f, 292f), rest) else rest
+    val finalW = (FINAL_BODY[2] - FINAL_BODY[0]) * u
+    val finalH = (FINAL_BODY[3] - FINAL_BODY[1]) * u
+    val wp = if (b == null) 0f else (((b[2] - b[0]) - REF_PRESSED_W) / ((FINAL_BODY[2] - FINAL_BODY[0]) - REF_PRESSED_W)).coerceAtLeast(0f)
+    val hp = if (b == null) 0f else (((b[3] - b[1]) - REF_PRESSED_H) / ((FINAL_BODY[3] - FINAL_BODY[1]) - REF_PRESSED_H)).coerceAtLeast(0f)
+    val e = hp.coerceIn(0f, 1f)                       // from the pressed rect to the rest place of the button
+    val right = start.right + (rest.right - start.right) * e
+    val top = start.top + (rest.top - start.top) * e
+    val w = start.width + (finalW - start.width) * wp
+    val h = start.height + (finalH - start.height) * hp
+    return Rect(right - w, top, right, top + h)
+}
+
+/**
  * Draws one frame of the ORIGINAL LiquidMenuMorph (same order of layers as LiquidMenuMorphScreen):
  *  1) pill + card body in ONE offscreen canvas; while closing the goo filter melts the card into the pill (metaball)
  *  2) content of the card (here: the search UI), clipped to the animated card, blurred / faded / scaled like the original
@@ -585,7 +626,9 @@ private fun SearchMorphLayer(
     val t = morph.clock.value
     val phase = morph.phase
     val f = frameFor(phase, t)
-    val b = f.body ?: return
+    // inPlace + closing: the card goes on being drawn (as the button's own rect) until the real button takes over
+    val b = f.body
+    if (b == null && !(inPlace && phase == Phase.Closing && t < INPLACE_BTN_DONE)) return
 
     // reference px -> screen px.  At the start / end of the morph (k = 0) the reference pill is laid on the button;
     // when the card is fully open (k = 1) it is at 1 : 1 scale, right edge on the button's right edge, under the button.
@@ -599,13 +642,14 @@ private fun SearchMorphLayer(
     // card). Otherwise the card hangs below the button and the button comes back as the X inside it.
     val axF = if (inPlace) rest.right - FINAL_BODY[2] * u else rest.right + inset - FINAL_BODY[2] * u
     val ayF = if (inPlace) rest.top - FINAL_BODY[1] * u else rest.bottom + gap - FINAL_BODY[1] * u
-    val k = ((b[3] - 288f) / (1449f - 288f)).coerceIn(0f, 1f)      // how far the card has grown out of the pill
+    val k = if (b == null) 0f else ((b[3] - 288f) / (1449f - 288f)).coerceIn(0f, 1f)      // how far the card has grown out of the pill
     val ax = ax0 + (axF - ax0) * k
     val ay = ay0 + (ayF - ay0) * k
     val sx = u * (s0x + (1f - s0x) * k)
     val sy = u * (s0y + (1f - s0y) * k)
-    val body = Rect(ax + b[0] * sx, ay + b[1] * sy, ax + b[2] * sx, ay + b[3] * sy)
-    val bodyR = min(f.bodyR * u, min(body.width, body.height) / 2f)
+    val body = if (inPlace) anchoredBody(b, phase, rest, u)
+    else Rect(ax + b!![0] * sx, ay + b[1] * sy, ax + b[2] * sx, ay + b[3] * sy)   // (b is never null here)
+    val bodyR = min(if (b == null) Float.MAX_VALUE else f.bodyR * u, min(body.width, body.height) / 2f)
 
     val cardBase = if (dark) Color(31 / 255f, 31 / 255f, 31 / 255f) else LightCard
     val buttonBase = if (dark) Color(0xFF2A2A2E) else Color(0xFFEDEDF0)     // the menu-colored glass button (drop colour)
@@ -621,12 +665,14 @@ private fun SearchMorphLayer(
     //    leaves the button: a rest blob of the button stays behind and fades, so a sticky neck stretches and snaps.
     val goo = remember(u) { if (Build.VERSION.SDK_INT >= 31) gooEffect(CLOSE_GOO_BLUR * u) else null }
     val gooOpen = remember(u) { if (Build.VERSION.SDK_INT >= 31) gooEffect(OPEN_NECK_BLUR * u) else null }
-    val openNeck = OPEN_NECK && phase == Phase.Opening && t >= 0.084f && t <= OPEN_NECK_END
+    // (inPlace: the card grows out of the button itself, so there is no neck and no second blob to merge)
+    val openNeck = !inPlace && OPEN_NECK && phase == Phase.Opening && t >= 0.084f && t <= OPEN_NECK_END
+    val gooOn = f.goo && !inPlace
     val gooNow = if (openNeck) gooOpen else goo
     Canvas(
         Modifier.fillMaxSize().graphicsLayer {
             compositingStrategy = CompositingStrategy.Offscreen
-            if (f.goo || openNeck) renderEffect = gooNow
+            if (gooOn || openNeck) renderEffect = gooNow
         }
     ) {
         if (openNeck) {
@@ -654,7 +700,7 @@ private fun SearchMorphLayer(
                 }
             }
         }
-        if (phase == Phase.Closing && f.goo) {
+        if (phase == Phase.Closing && gooOn) {
             f.pill?.let { p ->
                 val r = mapPill(p, rest)
                 drawRoundRect(buttonBase.copy(alpha = f.pillAlpha), r.topLeft, r.size, CornerRadius(min(r.width, r.height) / 2f))
@@ -667,7 +713,11 @@ private fun SearchMorphLayer(
     if (phase == Phase.Opening && f.pill != null && f.pillContent > 0.01f) {
         Box(
             Modifier
-                .absoluteOffset { IntOffset((body.center.x - 11.dp.toPx()).roundToInt(), (body.center.y - 11.dp.toPx()).roundToInt()) }
+                .absoluteOffset {
+                    // inPlace: the icon stays where the button is while the card grows from it
+                    val c = if (inPlace) rest.center else body.center
+                    IntOffset((c.x - 11.dp.toPx()).roundToInt(), (c.y - 11.dp.toPx()).roundToInt())
+                }
                 .graphicsLayer {
                     alpha = f.pillContent
                     if (mirrored) scaleX = -1f      // the whole layer is mirrored: the icon is turned back
@@ -692,7 +742,8 @@ private fun SearchMorphLayer(
             Box(
                 Modifier
                     .absoluteOffset {
-                        IntOffset((body.center.x - cardW / 2f).roundToInt(), (body.center.y - cardH / 2f).roundToInt())
+                        if (inPlace) IntOffset((body.right - cardW).roundToInt(), body.top.roundToInt())   // grows from its corner
+                        else IntOffset((body.center.x - cardW / 2f).roundToInt(), (body.center.y - cardH / 2f).roundToInt())
                     }
                     .size(with(density) { cardW.toDp() }, with(density) { cardH.toDp() })
                     .graphicsLayer {
@@ -713,12 +764,13 @@ private fun SearchMorphLayer(
     }
 
     // 3) glass rim (thin light edge) - same gradient as the original
-    if (f.rim > 0.01f) {
+    val rimK = if (inPlace && phase == Phase.Closing && t >= 0.2f) 0f else f.rim
+    if (rimK > 0.01f) {
         val rimColor = if (dark) Color.White else Color.Black
         Canvas(Modifier.fillMaxSize()) {
             drawRoundRect(
                 Brush.verticalGradient(
-                    listOf(rimColor.copy(alpha = 0.20f * f.rim), rimColor.copy(alpha = 0.05f * f.rim)),
+                    listOf(rimColor.copy(alpha = 0.20f * rimK), rimColor.copy(alpha = 0.05f * rimK)),
                     startY = body.top, endY = body.bottom,
                 ),
                 body.topLeft, body.size, CornerRadius(bodyR),
