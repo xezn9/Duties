@@ -43,6 +43,8 @@ fun LiquidButton(
     isInteractive: Boolean = true,
     tint: Color = Color.Unspecified,
     surfaceColor: Color = Color.Unspecified,
+    /** Like [surfaceColor] but drawn as it is: it does NOT follow the transparency of the glass theme. */
+    fixedSurfaceColor: Color = Color.Unspecified,
     horizontalPadding: Dp = 16f.dp,
     content: @Composable RowScope.() -> Unit
 ) {
@@ -102,6 +104,9 @@ fun LiquidButton(
                     }
                     if (surfaceColor.isSpecified) {
                         drawRect(GlassTheme.fill(surfaceColor))
+                    }
+                    if (fixedSurfaceColor.isSpecified) {
+                        drawRect(fixedSurfaceColor)
                     }
                 }
             )

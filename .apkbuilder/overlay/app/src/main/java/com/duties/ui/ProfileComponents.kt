@@ -193,7 +193,8 @@ fun MenuGlassButton(
         onClick = onClick,
         backdrop = backdrop,
         modifier = modifier,
-        surfaceColor = menuGlassColor(dark),
+        // fixed: stays visible even when the transparency of the glass theme is 100% (like the white button was)
+        fixedSurfaceColor = menuGlassColor(dark),
         horizontalPadding = horizontalPadding,
         content = content
     )
