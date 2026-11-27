@@ -94,6 +94,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.navigationBars
 import com.duties.R
 import com.google.firebase.firestore.FirebaseFirestore
 import com.kyant.backdrop.Backdrop
