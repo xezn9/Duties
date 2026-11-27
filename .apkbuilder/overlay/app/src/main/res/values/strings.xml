@@ -211,6 +211,11 @@
     <string name="channel_crop_title">صورة القناة</string>
     <string name="channel_members_header">الأعضاء · %1$d</string>
     <string name="channel_banned_header">المحظورين · %1$d</string>
+    <string name="channel_stat_members">الأعضاء</string>
+    <string name="channel_stat_admins">المشرفون</string>
+    <string name="channel_stat_type">نوع القناة</string>
+    <string name="channel_stat_public">عامة</string>
+    <string name="channel_stat_private">خاصة</string>
     <string name="channel_owner_badge">المالك</string>
     <string name="channel_you_badge">أنت</string>
     <string name="channel_admin_badge">مشرف</string>
