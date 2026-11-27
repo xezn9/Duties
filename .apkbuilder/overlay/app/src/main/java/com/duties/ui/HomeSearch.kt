@@ -165,9 +165,10 @@ private const val REF_PILL_CY = 222f
  * comes back (as the X) when the drop has left. Closing: the drop melts back; the button is born again as a small bud
  * (same bud rect / alpha as the original), grows into the pill, overshoots and settles.
  */
-private fun buttonMorph(morph: SearchMorph, btnWPx: Float, btnHPx: Float): FloatArray {
+private fun buttonMorph(morph: SearchMorph, btnWPx: Float, btnHPx: Float, dropPx: Float): FloatArray {
     val ph = morph.phase
-    if (ph != Phase.Opening && ph != Phase.Closing) return floatArrayOf(1f, 1f, 0f, 0f, 1f)
+    // open: the X sits inside the card, which hangs below the title row, so it is [dropPx] lower than the rest place
+    if (ph != Phase.Opening && ph != Phase.Closing) return floatArrayOf(1f, 1f, 0f, if (ph == Phase.Open) dropPx else 0f, 1f)
     val t = morph.clock.value
     val f = frameFor(ph, t)
     val p = f.pill
@@ -186,10 +187,10 @@ private fun buttonMorph(morph: SearchMorph, btnWPx: Float, btnHPx: Float): Float
         }
         val r = smooth01((t - 0.27f) / 0.10f)                 // the button comes back (as the X, inside the card)
         val sc = 0.6f + 0.4f * r
-        return floatArrayOf(sc, sc, 0f, 0f, r)
+        return floatArrayOf(sc, sc, 0f, dropPx, r)
     }
     if (p == null) {                                          // closing, before the bud: gone
-        return floatArrayOf(1f, 1f, 0f, 0f, 1f - smooth01(t / 0.04f))
+        return floatArrayOf(1f, 1f, 0f, dropPx, 1f - smooth01(t / 0.04f))
     }
     return floatArrayOf(
         (p[2] - p[0]) / REF_PILL_W, (p[3] - p[1]) / REF_PILL_H,
@@ -235,7 +236,7 @@ internal fun HomeSearchButton(
             .onGloballyPositioned { morph.buttonBounds = it.boundsInRoot() }
             .graphicsLayer {
                 val e = enter.value
-                val sq = buttonMorph(morph, 48.dp.toPx(), 48.dp.toPx())
+                val sq = buttonMorph(morph, 48.dp.toPx(), 48.dp.toPx(), 48.dp.toPx() + (CARD_GAP + CARD_INSET).toPx())
                 scaleX = e * sq[0]
                 scaleY = e * sq[1]
                 translationX = sq[2]
@@ -312,6 +313,9 @@ private val LightCard = Color(0xFFF2F2F7)
 
 /** Distance between the corner of the card and the button (the X) that sits inside it. */
 private val CARD_INSET = 14.dp
+
+/** Gap between the title row (the button's rest place) and the top of the card. */
+private val CARD_GAP = 10.dp
 
 @Composable
 private fun SearchContent(
@@ -438,7 +442,8 @@ private const val REF_W_PX = 1080f
  *  3) glass rim
  * The frames come from frameFor() untouched. They are only placed on this screen:
  *  - the pill of the original = the search button (its rect is the "rest" rect);
- *  - the card grows OUT of the button: it covers it, and the button comes back as the X inside the card's top corner.
+ *  - the card grows OUT of the button and falls below the title row; the button comes back (lower, see buttonMorph)
+ *    as the X inside the card's top corner.
  * Only this composable reads the animation clock, so only it recomposes every frame.
  */
 @Composable
@@ -461,10 +466,11 @@ private fun SearchMorphLayer(
     val s0x = rest.width / (REF_PILL_W * u)
     val s0y = rest.height / (REF_PILL_H * u)
     val inset = with(density) { CARD_INSET.toPx() }      // the button (now the X) sits this far inside the card's corner
+    val gap = with(density) { CARD_GAP.toPx() }
     val ax0 = rest.center.x - 366.5f * u * s0x
     val ay0 = rest.center.y - REF_PILL_CY * u * s0y
     val axF = rest.right + inset - FINAL_BODY[2] * u
-    val ayF = rest.top - inset - FINAL_BODY[1] * u
+    val ayF = rest.bottom + gap - FINAL_BODY[1] * u
     val k = ((b[3] - 288f) / (1449f - 288f)).coerceIn(0f, 1f)      // how far the card has grown out of the pill
     val ax = ax0 + (axF - ax0) * k
     val ay = ay0 + (ayF - ay0) * k
