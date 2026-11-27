@@ -165,9 +165,12 @@ fun WhiteLiquidButton(
     )
 }
 
-/** The glass tint of the bottom bar (menu). Buttons that must look like the menu use the very same tint. */
+/**
+ * The color of the menu buttons: the dark grey of the bottom bar (the selected tab pill), but with a body, so a small
+ * button is clearly visible (the bar itself uses a very thin tint, which on a 48dp button looked like an empty ring).
+ */
 fun menuGlassColor(dark: Boolean): Color =
-    if (dark) Color(0xFF2A2A2E).copy(0.16f) else Color(0xFFFAFAFA).copy(0.4f)
+    if (dark) Color(0xFF2C2C30).copy(0.92f) else Color(0xFFFAFAFA).copy(0.85f)
 
 /** Ink (icons / text) of the bottom bar: white on the dark theme, black on the light one. */
 fun menuInk(dark: Boolean): Color = if (dark) Color.White else Color.Black
