@@ -389,15 +389,18 @@ private fun SearchContent(
 
                 // ---- the morphing glass: drop -> field (and back), with the text blurred in / out
                 // (absolute pixel geometry: it must be laid out LTR, in RTL "TopStart" is the right edge)
+                // The parent Box that PLACES the children must itself be composed LTR, so it gets its own Box here.
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                    SearchMorphLayer(
-                        morph = morph, rest = rest, fin = fin, u = layerSize.width / 1080f,
-                        dark = dark, backdrop = backdrop,
-                        query = query, onQuery = { query = it },
-                        textColor = textColor, subColor = subColor,
-                        onSearchKey = { focus.clearFocus() },
-                        fr = fr
-                    )
+                    Box(Modifier.fillMaxSize()) {
+                        SearchMorphLayer(
+                            morph = morph, rest = rest, fin = fin, u = layerSize.width / 1080f,
+                            dark = dark, backdrop = backdrop,
+                            query = query, onQuery = { query = it },
+                            textColor = textColor, subColor = subColor,
+                            onSearchKey = { focus.clearFocus() },
+                            fr = fr
+                        )
+                    }
                 }
 
                 // ---- the answer: a short message, or the channels that were found
