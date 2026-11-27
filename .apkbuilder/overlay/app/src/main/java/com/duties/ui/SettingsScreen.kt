@@ -183,15 +183,17 @@ private fun SettingsMain(dark: Boolean, onClose: () -> Unit, onTheme: (Rect?) ->
 
         // ---- notifications: a small liquid glass button on the LEFT of the top bar. It plays the same morph as the
         // search button of Home: the card (permissions, battery, links) is born from it and the bell turns into the X.
-        // The card is over the page and UNDER the button (the button becomes the X inside the card).
+        // The card grows at the place of the button (the button turns into it, like the original LiquidMenuMorph);
+        // its outer edge and its top are the ones of the button, so it keeps the same margin as the page (16dp).
         MorphPanel(
             visible = notifOpen,
             dark = dark,
             morph = notifMorph,
             icon = R.drawable.ic_notifications,
             mirrored = true,
+            inPlace = true,
             onDismiss = { notifOpen = false }
-        ) { NotificationsCard(dark) }
+        ) { NotificationsCard(dark, onClose = { notifOpen = false }) }
         HomeSearchButton(
             open = notifOpen,
             dark = dark,
@@ -201,6 +203,8 @@ private fun SettingsMain(dark: Boolean, onClose: () -> Unit, onTheme: (Rect?) ->
             delayMs = 160,
             icon = R.drawable.ic_notifications,
             mirrored = true,
+            // like the original animation: the button itself turns into the card (it does not come back as an X)
+            inPlace = true,
             // this page is laid out right-to-left, so "end" is the left side (the close button is at the start = right)
             modifier = Modifier
                 .align(Alignment.TopEnd)

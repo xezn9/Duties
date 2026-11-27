@@ -175,10 +175,16 @@ private const val REF_PILL_CY = 222f
  * comes back (as the X) when the drop has left. Closing: the drop melts back; the button is born again as a small bud
  * (same bud rect / alpha as the original), grows into the pill, overshoots and settles.
  */
-private fun buttonMorph(morph: SearchMorph, btnWPx: Float, btnHPx: Float, dropPx: Float, mirror: Float = 1f): FloatArray {
+private fun buttonMorph(
+    morph: SearchMorph, btnWPx: Float, btnHPx: Float, dropPx: Float, mirror: Float = 1f, inPlace: Boolean = false
+): FloatArray {
     val ph = morph.phase
+    // inPlace: the button IS the menu (like the original): it turns into the drop and stays gone while the card is open
+    // (the card covers its place); it is born again as the bud when the card melts back
     // open: the X sits inside the card, which hangs below the title row, so it is [dropPx] lower than the rest place
-    if (ph != Phase.Opening && ph != Phase.Closing) return floatArrayOf(1f, 1f, 0f, if (ph == Phase.Open) dropPx else 0f, 1f)
+    if (ph != Phase.Opening && ph != Phase.Closing) {
+        return floatArrayOf(1f, 1f, 0f, if (ph == Phase.Open) dropPx else 0f, if (inPlace && ph == Phase.Open) 0f else 1f)
+    }
     val t = morph.clock.value
     val f = frameFor(ph, t)
     val p = f.pill
@@ -192,12 +198,12 @@ private fun buttonMorph(morph: SearchMorph, btnWPx: Float, btnHPx: Float, dropPx
             )
         }
         // from 0.084 the pressed button IS the drop (the layer draws it in the button's colour, no fading, no pop)
-        val r = smooth01((t - 0.27f) / 0.10f)                 // the button comes back (as the X, inside the card)
+        val r = if (inPlace) 0f else smooth01((t - 0.27f) / 0.10f)   // the button comes back (as the X, inside the card)
         val sc = 0.6f + 0.4f * r
         return floatArrayOf(sc, sc, 0f, dropPx, r)
     }
     if (p == null) {                                          // closing, before the bud: gone
-        return floatArrayOf(1f, 1f, 0f, dropPx, 1f - smooth01(t / 0.04f))
+        return floatArrayOf(1f, 1f, 0f, dropPx, if (inPlace) 0f else 1f - smooth01(t / 0.04f))
     }
     return floatArrayOf(
         (p[2] - p[0]) / REF_PILL_W, (p[3] - p[1]) / REF_PILL_H,
@@ -232,7 +238,12 @@ internal fun HomeSearchButton(
     /** The icon of the closed button (the magnifier for the search, the bell for the notifications...). */
     icon: Int = R.drawable.ic_search,
     /** The button is on the LEFT of the screen: its panel opens to the right (see [MorphPanel]). */
-    mirrored: Boolean = false
+    mirrored: Boolean = false,
+    /**
+     * true = like the ORIGINAL animation: the button itself turns into the menu (the card grows at its place and covers
+     * it, the button does not come back as an X). A tap on its place while the card is open still calls [onClick].
+     */
+    inPlace: Boolean = false
 ) {
     val enter = remember { Animatable(0f) }
     LaunchedEffect(Unit) {
@@ -244,6 +255,7 @@ internal fun HomeSearchButton(
     // gone at once and the magnifier is back before the button re-forms as the bud.
     val iconTarget by remember {
         derivedStateOf {
+            if (inPlace) return@derivedStateOf 0f          // the button never turns into an X: it becomes the card
             val c = morph.clock.value
             when (morph.phase) {
                 Phase.Closed -> 0f
@@ -273,8 +285,10 @@ internal fun HomeSearchButton(
             .graphicsLayer {
                 val e = enter.value
                 val sq = buttonMorph(
-                    morph, 48.dp.toPx(), 48.dp.toPx(), 48.dp.toPx() + (CARD_GAP + CARD_INSET).toPx(),
-                    if (mirrored) -1f else 1f
+                    morph, 48.dp.toPx(), 48.dp.toPx(),
+                    if (inPlace) 0f else 48.dp.toPx() + (CARD_GAP + CARD_INSET).toPx(),
+                    if (mirrored) -1f else 1f,
+                    inPlace
                 )
                 scaleX = e * sq[0]
                 scaleY = e * sq[1]
@@ -358,6 +372,7 @@ internal fun MorphPanel(
     icon: Int,
     modifier: Modifier = Modifier,
     mirrored: Boolean = false,
+    inPlace: Boolean = false,
     onDismiss: () -> Unit = {},
     content: @Composable () -> Unit
 ) {
@@ -386,7 +401,7 @@ internal fun MorphPanel(
                     SearchMorphLayer(
                         morph = morph, rest = rest, u = w / REF_W_PX, dark = dark,
                         screenBottom = layerSize.height.toFloat(),
-                        icon = icon, mirrored = mirrored
+                        icon = icon, mirrored = mirrored, inPlace = inPlace
                     ) {
                         Box(Modifier.fillMaxSize().graphicsLayer { if (mirrored) scaleX = -1f }) { content() }
                     }
@@ -563,6 +578,7 @@ private fun SearchMorphLayer(
     screenBottom: Float,
     icon: Int = R.drawable.ic_search,
     mirrored: Boolean = false,
+    inPlace: Boolean = false,
     content: @Composable (bottomInsetPx: Float) -> Unit
 ) {
     val density = LocalDensity.current
@@ -579,8 +595,10 @@ private fun SearchMorphLayer(
     val gap = with(density) { CARD_GAP.toPx() }
     val ax0 = rest.center.x - 366.5f * u * s0x
     val ay0 = rest.center.y - REF_PILL_CY * u * s0y
-    val axF = rest.right + inset - FINAL_BODY[2] * u
-    val ayF = rest.bottom + gap - FINAL_BODY[1] * u
+    // inPlace (the original): the settled card has its top and its outer edge ON the button (the button turned into the
+    // card). Otherwise the card hangs below the button and the button comes back as the X inside it.
+    val axF = if (inPlace) rest.right - FINAL_BODY[2] * u else rest.right + inset - FINAL_BODY[2] * u
+    val ayF = if (inPlace) rest.top - FINAL_BODY[1] * u else rest.bottom + gap - FINAL_BODY[1] * u
     val k = ((b[3] - 288f) / (1449f - 288f)).coerceIn(0f, 1f)      // how far the card has grown out of the pill
     val ax = ax0 + (axF - ax0) * k
     val ay = ay0 + (ayF - ay0) * k

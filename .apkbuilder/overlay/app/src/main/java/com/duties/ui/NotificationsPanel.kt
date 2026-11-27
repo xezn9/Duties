@@ -134,7 +134,7 @@ private val GreenLight = Color(0xFF34C759)
 
 /** What is inside the card: a title (the X of the button sits at its end) and the three buttons. */
 @Composable
-internal fun NotificationsCard(dark: Boolean) {
+internal fun NotificationsCard(dark: Boolean, onClose: () -> Unit) {
     val context = LocalContext.current
     val textColor = if (dark) Color.White else Color(0xFF101114)
     val subColor = if (dark) Color(0xFFB0B3B8) else Color(0xFF55586A)
@@ -148,10 +148,12 @@ internal fun NotificationsCard(dark: Boolean) {
         links = NotifAccess.linksOn(context)
     }
 
-    Column(Modifier.fillMaxSize().padding(start = CARD_INSET, end = CARD_INSET, top = CARD_INSET)) {
-        // top row: [title] ... [the X of the button, drawn above the card by HomeSearchButton]
+    Column(Modifier.fillMaxSize()) {
+        // top row: [title] ... [X]. The card grows exactly where the bell button was (the button turned into the
+        // card), so the 48dp slot at the end of this row is the place of that button: the tap on it (the button is
+        // invisible but still there) and the tap on the X below both close the card.
         Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
+            Column(Modifier.weight(1f).padding(start = 18.dp)) {
                 BasicText(
                     stringResource(R.string.notifications_title),
                     maxLines = 1,
@@ -164,9 +166,14 @@ internal fun NotificationsCard(dark: Boolean) {
                     style = TextStyle(color = subColor, fontSize = 11.sp)
                 )
             }
-            Spacer(Modifier.width(48.dp + 8.dp))
+            Box(
+                Modifier.size(48.dp).padding(6.dp).clip(CircleShape).bounceClick(onClick = onClose)
+                    .background(textColor.copy(alpha = 0.08f)),
+                contentAlignment = Alignment.Center
+            ) { GlyphIcon(R.drawable.ic_close, textColor, 18.dp) }
         }
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(12.dp))
+        Column(Modifier.fillMaxWidth().padding(start = CARD_INSET, end = CARD_INSET)) {
         PermRow(
             icon = R.drawable.ic_notifications,
             tint = if (dark) Color(0xFFFFB340) else Color(0xFFFF9500),
@@ -190,6 +197,7 @@ internal fun NotificationsCard(dark: Boolean) {
             hint = stringResource(R.string.notif_links_hint),
             on = links, dark = dark, textColor = textColor, subColor = subColor
         ) { NotifAccess.openLinkSettings(context) }
+        }
     }
 }
 

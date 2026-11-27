@@ -48,7 +48,7 @@
     <string name="theme_title">ثيم التطبيق</string>
     <string name="notifications_title">الإشعارات</string>
     <string name="notifications_row_hint">إشعارات الرسائل</string>
-    <string name="notif_panel_sub">كل شي لازم يشتغل حتى توصلك الرسائل</string>
+    <string name="notif_panel_sub">فعّلهم حتى توصلك الرسائل</string>
     <string name="notif_perm_title">السماح بالإشعارات</string>
     <string name="notif_perm_hint">حتى تطلع إشعارات الرسائل</string>
     <string name="notif_battery_title">إيقاف توفير البطارية</string>
