@@ -17,8 +17,17 @@
     //                      signed in can add himself to "members" (Join button of the Home search)
     //   invited/{uid}    = true : written by the owner when he invites someone, lets that person add himself
     //                             to "members" when he accepts (and it is used up)
-    //   messages/{id}    = { uid, name, text, createdAt }: only members read / write, a message can be created
-    //                      only with the sender's own uid and the server time, and it can never be edited.
+    //   admins/{uid}     = true : supervisors, written only by the owner. Only the OWNER and the SUPERVISORS can write
+    //                      messages, every other member only reads.
+    //   adminPerms/{uid} = { ban, kick, edit }: what a supervisor may do, each one true. Written only by the owner (a copy of
+    //                      "adminPerms" of the channel in Firestore). Here only "ban" and "kick" are enforced:
+    //                        kick = a supervisor can remove an ORDINARY member (not the owner, not a supervisor)
+    //                        ban  = a supervisor can write banned/{uid} and remove the member, and lift a ban
+    //   banned/{uid}     = true : banned from the channel. A banned person can not be added to "members" by anybody, not even by
+    //                      himself (public Join / accepted invitation) until the ban is lifted. Written by the owner or by a
+    //                      supervisor with "ban" (a supervisor can not ban the owner or another supervisor).
+    //   messages/{id}    = { uid, name, text, createdAt }: only members read; only the owner / supervisors write; a message
+    //                      can be created only with the sender's own uid and the server time, and it can never be edited.
     // The owner can delete the whole chat (when the channel is deleted).
 
     ".read": false,
@@ -112,8 +121,41 @@
         "members": {
           ".read": "auth != null && root.child('chats').child($cid).child('members').child(auth.uid).exists()",
           "$uid": {
-            // the owner adds people; a person can add himself only if he was invited, and can always remove himself
-            ".write": "auth != null && (newData.parent().parent().child('owner').val() === auth.uid || (auth.uid === $uid && (!newData.exists() || root.child('chats').child($cid).child('invited').child($uid).exists() || root.child('chats').child($cid).child('public').val() === true)))",
+            // REMOVE a member: the owner; the person himself (leaving); or a supervisor that was given "kick" or "ban"
+            //   (he can remove neither the owner nor another supervisor).
+            // ADD a member: the owner, or the person himself if he was invited / the chat is public.
+            //   Nobody can add a BANNED person.
+            ".write": "auth != null && ((!newData.exists() && (newData.parent().parent().child('owner').val() === auth.uid || auth.uid === $uid || (root.child('chats').child($cid).child('members').child(auth.uid).exists() && root.child('chats').child($cid).child('admins').child(auth.uid).exists() && (root.child('chats').child($cid).child('adminPerms').child(auth.uid).child('kick').val() === true || root.child('chats').child($cid).child('adminPerms').child(auth.uid).child('ban').val() === true) && $uid !== root.child('chats').child($cid).child('owner').val() && !root.child('chats').child($cid).child('admins').child($uid).exists()))) || (newData.exists() && !root.child('chats').child($cid).child('banned').child($uid).exists() && (newData.parent().parent().child('owner').val() === auth.uid || (auth.uid === $uid && (root.child('chats').child($cid).child('invited').child($uid).exists() || root.child('chats').child($cid).child('public').val() === true)))))",
+            ".validate": "newData.val() === true"
+          }
+        },
+
+        // what each supervisor may do (a copy of "adminPerms" of the channel): only the owner writes it, members read it
+        "adminPerms": {
+          ".read": "auth != null && root.child('chats').child($cid).child('members').child(auth.uid).exists()",
+          "$uid": {
+            ".write": "auth != null && newData.parent().parent().child('owner').val() === auth.uid",
+            "ban": {
+              ".validate": "newData.val() === true"
+            },
+            "kick": {
+              ".validate": "newData.val() === true"
+            },
+            "edit": {
+              ".validate": "newData.val() === true"
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
+        },
+
+        // banned people. The owner, or a supervisor with "ban" (who can neither ban the owner nor another supervisor;
+        // lifting a ban is always allowed to him). Members read it.
+        "banned": {
+          ".read": "auth != null && root.child('chats').child($cid).child('members').child(auth.uid).exists()",
+          "$uid": {
+            ".write": "auth != null && (newData.parent().parent().child('owner').val() === auth.uid || (root.child('chats').child($cid).child('members').child(auth.uid).exists() && root.child('chats').child($cid).child('admins').child(auth.uid).exists() && root.child('chats').child($cid).child('adminPerms').child(auth.uid).child('ban').val() === true && (!newData.exists() || ($uid !== root.child('chats').child($cid).child('owner').val() && !root.child('chats').child($cid).child('admins').child($uid).exists()))))",
             ".validate": "newData.val() === true"
           }
         },
@@ -123,6 +165,15 @@
         "public": {
           ".write": "auth != null && newData.parent().child('owner').val() === auth.uid",
           ".validate": "newData.isBoolean()"
+        },
+
+        // supervisors: only the owner writes it; every member of the chat can read it
+        "admins": {
+          ".read": "auth != null && root.child('chats').child($cid).child('members').child(auth.uid).exists()",
+          "$uid": {
+            ".write": "auth != null && newData.parent().parent().child('owner').val() === auth.uid",
+            ".validate": "newData.val() === true"
+          }
         },
 
         "invited": {
@@ -136,8 +187,8 @@
         "messages": {
           ".read": "auth != null && root.child('chats').child($cid).child('members').child(auth.uid).exists()",
           "$mid": {
-            // a member may only CREATE a message (no edit, no delete)
-            ".write": "auth != null && !data.exists() && newData.exists() && root.child('chats').child($cid).child('members').child(auth.uid).exists()",
+            // only the owner and the supervisors may CREATE a message (no edit, no delete)
+            ".write": "auth != null && !data.exists() && newData.exists() && root.child('chats').child($cid).child('members').child(auth.uid).exists() && (root.child('chats').child($cid).child('owner').val() === auth.uid || root.child('chats').child($cid).child('admins').child(auth.uid).exists())",
             ".validate": "newData.hasChildren(['uid', 'name', 'text', 'createdAt']) && newData.child('uid').val() === auth.uid",
             "uid": {
               ".validate": "newData.isString()"

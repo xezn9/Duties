@@ -861,6 +861,15 @@ private fun SearchResultRow(
                 softWrap = false,
                 style = TextStyle(color = subColor, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
             )
+        } else if (ch.bannedMe) {
+            // banned from this channel: no Join button until the ban is lifted
+            Spacer(Modifier.width(8.dp))
+            BasicText(
+                stringResource(R.string.search_banned),
+                maxLines = 1,
+                softWrap = false,
+                style = TextStyle(color = Color(0xFFE5484D), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            )
         } else if (ch.isPublic) {
             Spacer(Modifier.width(8.dp))
             LiquidButton(

@@ -19,6 +19,9 @@ import kotlinx.coroutines.withTimeoutOrNull
  *   chats/{channelId}/owner               = uid of the channel owner
  *   chats/{channelId}/members/{uid}       = true   (who may read and write the chat)
  *   chats/{channelId}/invited/{uid}       = true   (invited at creation: lets him add himself when he accepts)
+ *   chats/{channelId}/admins/{uid}        = true   (supervisors: they can write, like the owner)
+ *   chats/{channelId}/adminPerms/{uid}    = { ban, kick, edit }  (what each supervisor may do, set by the owner)
+ *   chats/{channelId}/banned/{uid}        = true   (banned: nobody can add him to "members" until the ban is lifted)
  *   chats/{channelId}/messages/{pushId}   = { uid, name, text, createdAt }
  *
  * Firestore is not touched by the chat. The channel list itself still comes from Firestore (Channels.kt) and only
@@ -97,6 +100,83 @@ internal object ChatRooms {
         }
     }
 
+    /**
+     * Owner: a supervisor is added to / removed from the room (only owner + supervisors may write messages).
+     * A new supervisor has no permissions yet; one that is taken back loses his permissions too.
+     */
+    fun setAdmin(channelId: String, adminUid: String, isAdmin: Boolean) {
+        runCatching {
+            val m = HashMap<String, Any?>()
+            m["admins/$adminUid"] = if (isAdmin) true else null
+            if (!isAdmin) m["adminPerms/$adminUid"] = null
+            room(channelId).updateChildren(m)
+        }
+    }
+
+    /** Owner: one permission ("ban" / "kick" / "edit") of a supervisor is switched on / off in the room. */
+    fun setAdminPerm(channelId: String, adminUid: String, perm: String, on: Boolean) {
+        runCatching { room(channelId).child("adminPerms").child(adminUid).child(perm).setValue(if (on) true else null) }
+    }
+
+    /**
+     * A member was removed from the channel, so he is out of the room too.
+     * [asOwner]: the owner also clears the supervisor entries of that person; a supervisor is only allowed to remove the
+     * member (the server refuses the whole write if it touches anything else).
+     */
+    fun kick(channelId: String, uid: String, asOwner: Boolean) {
+        runCatching {
+            val m = HashMap<String, Any?>()
+            m["members/$uid"] = null
+            if (asOwner) {
+                m["admins/$uid"] = null
+                m["adminPerms/$uid"] = null
+            }
+            room(channelId).updateChildren(m)
+        }
+    }
+
+    /**
+     * A member is banned: he is marked as banned (the room then refuses to add him, even if he tries it himself) and he
+     * is out of the room, in one write. Waits for the server (max 5 s) and throws if the write did not reach it,
+     * so the channel itself (Firestore) is only changed when the room is closed to him.
+     */
+    suspend fun ban(channelId: String, uid: String, asOwner: Boolean) {
+        val m = HashMap<String, Any?>()
+        m["banned/$uid"] = true
+        m["members/$uid"] = null
+        if (asOwner) {
+            m["admins/$uid"] = null
+            m["adminPerms/$uid"] = null
+        }
+        // (await() gives null on success, so "did it finish in time" is kept in a flag, not in the result)
+        var done = false
+        withTimeoutOrNull(5000) {
+            room(channelId).updateChildren(m).await()
+            done = true
+        }
+        if (!done) {
+            // offline / slow: the write above stays queued on this phone and would reach the server later, when the channel
+            // itself was NOT changed. Queue the opposite right behind it (writes keep their order), then report the failure.
+            unbanQuietly(channelId, uid)
+            throw IllegalStateException("the chat room did not answer")
+        }
+    }
+
+    /** The ban is lifted in the room. Waits for the server (max 5 s) and throws if the write did not reach it. */
+    suspend fun unban(channelId: String, uid: String) {
+        var done = false
+        withTimeoutOrNull(5000) {
+            room(channelId).child("banned").child(uid).removeValue().await()
+            done = true
+        }
+        if (!done) throw IllegalStateException("the chat room did not answer")
+    }
+
+    /** Same as [unban] but never throws and does not wait (used to undo a ban that could not be finished). */
+    fun unbanQuietly(channelId: String, uid: String) {
+        runCatching { room(channelId).child("banned").child(uid).removeValue() }
+    }
+
     /** The channel was deleted: its whole chat goes (only the owner is allowed to do it). */
     fun delete(channelId: String) {
         runCatching { room(channelId).removeValue() }
@@ -112,14 +192,31 @@ internal object ChatRooms {
     fun sync(uid: String, channels: List<Channel>) {
         for (ch in channels) {
             if (!ch.isOwner) continue
-            val signature = ch.id + ":" + ch.isPublic + ":" + ch.members.sorted().joinToString(",")
+            val signature = ch.id + ":" + ch.isPublic + ":" + ch.members.sorted().joinToString(",") +
+                ":" + ch.admins.sorted().joinToString(",") +
+                ":" + ch.adminPerms.entries.sortedBy { it.key }.joinToString(",") { it.key + "=" + it.value.sorted().joinToString("+") } +
+                ":" + ch.banned.sorted().joinToString(",")
             if (!synced.add(signature)) continue
             runCatching {
                 val m = HashMap<String, Any?>()
                 m["owner"] = uid
                 m["public"] = ch.isPublic
                 m["members/$uid"] = true
-                for (u in ch.members) m["members/$u"] = true
+                for (u in ch.members) {
+                    // a banned person is never put back inside (the room would refuse the whole write)
+                    if (u in ch.banned) continue
+                    m["members/$u"] = true
+                    // the supervisors of the room are exactly the supervisors of the channel (the owner needs no entry),
+                    // and what each one may do is copied too (the room enforces "ban" and "kick")
+                    if (u != uid) {
+                        val isAdmin = u in ch.admins
+                        m["admins/$u"] = if (isAdmin) true else null
+                        val perms = ch.adminPerms[u].orEmpty()
+                        m["adminPerms/$u"] = if (isAdmin && perms.isNotEmpty()) perms.associateWith { true } else null
+                    }
+                }
+                // the banned list of the channel is copied to the room (repairs a ban that did not reach it)
+                for (b in ch.banned) if (b != uid) m["banned/$b"] = true
                 room(ch.id).updateChildren(m).addOnFailureListener { synced.remove(signature) }
             }.onFailure { synced.remove(signature) }
         }

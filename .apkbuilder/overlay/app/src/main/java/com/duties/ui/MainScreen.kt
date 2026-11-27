@@ -263,6 +263,7 @@ fun MainScreen(dark: Boolean, introDelayMs: Int = 200) {
                 uid = user?.uid ?: "local",
                 senderName = profile.name,
                 myPhoto = profile.avatar.cropped,
+                channels = channels,
                 onClose = { chatOpen = false },
                 onDismissed = { chat = null }
             )
@@ -311,6 +312,7 @@ private fun TabPage(
     val context = LocalContext.current
     val saveError = stringResource(R.string.error_save)
     val failToast = { Toast.makeText(context, saveError, Toast.LENGTH_LONG).show() }
+    val bannedError = stringResource(R.string.error_banned_join)
 
     // Account tab = the profile page (no big title, it has its own banner).
     if (index == 2) {
@@ -403,7 +405,11 @@ private fun TabPage(
                 myChannelIds = channels.channels.map { it.id }.toSet(),
                 onDismiss = { searching = false },
                 onJoin = { ch ->
-                    val ok = runCatching { channels.join(ch) }.onFailure { failToast() }.isSuccess
+                    val ok = runCatching { channels.join(ch) }
+                        .onFailure {
+                            if (it is BannedException) Toast.makeText(context, bannedError, Toast.LENGTH_LONG).show()
+                            else failToast()
+                        }.isSuccess
                     if (ok) {
                         // wait (max 4 s) until the channel shows up in my list, otherwise the chat would be
                         // closed at once ("the channel is gone"), then close the search and open the chat

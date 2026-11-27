@@ -155,6 +155,7 @@ internal fun ChatMorph(
     uid: String,
     senderName: String,
     myPhoto: Bitmap?,
+    channels: ChannelsState,
     onClose: () -> Unit,
     onDismissed: () -> Unit
 ) {
@@ -173,7 +174,20 @@ internal fun ChatMorph(
     // the profile of a person (opens from his photo in the chat, see UserProfile.kt)
     var profile by remember { mutableStateOf<ProfileTarget?>(null) }
     var profileOpen by remember { mutableStateOf(false) }
-    BackHandler(enabled = open && target != null && profile == null) { close() }
+    // the channel page (name, @username, photo, members) that opens from the name bar at the top (see ChannelEdit.kt)
+    var editOpen by remember { mutableStateOf(false) }
+    var editFrom by remember { mutableStateOf(Rect.Zero) }
+    LaunchedEffect(open) { if (!open) editOpen = false }
+    BackHandler(enabled = open && target != null && profile == null && !editOpen) { close() }
+    // a photo was tapped (in the chat or in the members list): its profile grows out of it
+    val openProfile: (ProfileTarget) -> Unit = { pt ->
+        if (profile == null) {
+            focus.clearFocus()
+            keyboard?.hide()
+            profile = pt
+            profileOpen = true
+        }
+    }
 
     LaunchedEffect(target, open) {
         if (open && target != null) {
@@ -206,22 +220,38 @@ internal fun ChatMorph(
                     }
                     .pointerInput(Unit) { detectTapGestures { } }          // covers what is below
             ) {
+                // the newest copy of the channel: after an edit (name / photo) the header changes by itself
+                val live = channels.channels.firstOrNull { it.id == t.channel.id } ?: t.channel
                 ChatContent(
-                    channel = t.channel,
+                    channel = live,
                     dark = dark,
                     uid = uid,
                     senderName = senderName,
                     myPhoto = myPhoto,
                     reveal = { 1f },
                     onBack = close,
-                    onAvatarClick = { pt ->
-                        if (profile == null) {
+                    onAvatarClick = openProfile,
+                    onHeaderClick = { r ->
+                        if (!editOpen && profile == null) {
                             focus.clearFocus()
                             keyboard?.hide()
-                            profile = pt
-                            profileOpen = true
+                            editFrom = r
+                            editOpen = true
                         }
                     }
+                )
+                // the channel page: grows out of the name bar, slides away together with the chat
+                ChannelEditMorph(
+                    open = editOpen,
+                    from = editFrom,
+                    channel = live,
+                    channels = channels,
+                    dark = dark,
+                    uid = uid,
+                    myName = senderName,
+                    myPhoto = myPhoto,
+                    onClose = { editOpen = false },
+                    onOpenProfile = openProfile
                 )
             }
 
@@ -250,7 +280,8 @@ private fun ChatContent(
     myPhoto: Bitmap?,
     reveal: () -> Float,
     onBack: () -> Unit,
-    onAvatarClick: (ProfileTarget) -> Unit
+    onAvatarClick: (ProfileTarget) -> Unit,
+    onHeaderClick: (Rect) -> Unit
 ) {
     val fg = if (dark) Color.White else Color(0xFF101114)
     val sub = if (dark) Color(0xFFB0B3B8) else Color(0xFF55586A)
@@ -270,6 +301,7 @@ private fun ChatContent(
     var topPx by remember { mutableIntStateOf(0) }
     var bottomPx by remember { mutableIntStateOf(0) }
     var draft by remember { mutableStateOf("") }
+    var headerBounds by remember { mutableStateOf(Rect.Zero) }     // the name bar (the channel page grows out of it)
     val failText = stringResource(R.string.chat_send_failed)
     val timeFormat = remember { DateFormat.getTimeInstance(DateFormat.SHORT) }
 
@@ -381,9 +413,12 @@ private fun ChatContent(
             // the name bar is now the same white liquid button as the two round buttons beside it
             WhiteLiquidButton(
                 backdrop = chatBd,
-                modifier = Modifier.weight(1f).height(BAR_BUTTON),
+                modifier = Modifier
+                    .weight(1f)
+                    .height(BAR_BUTTON)
+                    .onGloballyPositioned { headerBounds = it.boundsInRoot() },
                 horizontalPadding = 4.dp,
-                onClick = { }
+                onClick = { onHeaderClick(headerBounds) }      // opens the channel page: edit name / @username / photo + members
             ) {
                 Avatar(channel.photo, channel.name, HDR_AVATAR)
                 Spacer(Modifier.width(10.dp))
@@ -418,73 +453,105 @@ private fun ChatContent(
             if (canSend) AppAccent.deep(Color(0xFFDB7608)).copy(alpha = 0.92f) else glassFill,
             tween(200), label = "sendFill"
         )
-        Row(
-            Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .imePadding()
-                .navigationBarsPadding()
-                .onSizeChanged { bottomPx = it.height }      // the bar alone, without keyboard / nav bar
-                .padding(horizontal = 12.dp, vertical = 8.dp)
-                .graphicsLayer {
-                    val a = seg(reveal(), 0.1f, 0.8f)
-                    alpha = a
-                    translationY = (1f - a) * 28.dp.toPx()
-                },
-            verticalAlignment = Alignment.Bottom,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
+        // only the owner and the supervisors can write: everybody else sees a lock note instead of the writing bar
+        val canWrite = channel.canWrite(uid)
+        if (!canWrite) {
             Box(
                 Modifier
-                    .weight(1f)
-                    .liquidCard(chatBd, RoundedCornerShape(26.dp), dark)
-                    .heightIn(min = BAR_BUTTON)
-                    .padding(horizontal = 18.dp, vertical = 12.dp),
-                contentAlignment = Alignment.CenterStart
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .imePadding()
+                    .navigationBarsPadding()
+                    .onSizeChanged { bottomPx = it.height }
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                    .graphicsLayer { alpha = seg(reveal(), 0.1f, 0.8f) }
             ) {
-                BasicTextField(
-                    value = draft,
-                    onValueChange = { draft = it },
-                    maxLines = 5,
-                    textStyle = TextStyle(
-                        color = fg, fontSize = 16.sp, lineHeight = 22.sp,
-                        textDirection = TextDirection.Content
-                    ),
-                    cursorBrush = SolidColor(AppAccent.pick(Color(0xFFFF9A2E))),
-                    modifier = Modifier.fillMaxWidth(),
-                    decorationBox = { inner ->
-                        Box(contentAlignment = Alignment.CenterStart) {
-                            if (draft.isEmpty()) {
-                                BasicText(
-                                    stringResource(R.string.chat_hint),
-                                    style = TextStyle(color = sub, fontSize = 16.sp, lineHeight = 22.sp)
-                                )
-                            }
-                            inner()
-                        }
-                    }
-                )
-            }
-            GlassSurface(
-                backdrop = chatBd,
-                container = sendFill,
-                modifier = Modifier.size(BAR_BUTTON),
-                onClick = {
-                    if (canSend) {
-                        val sent = chat.send(draft) {
-                            Toast.makeText(context, failText, Toast.LENGTH_SHORT).show()
-                        }
-                        if (sent) draft = ""
-                    }
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .liquidCard(chatBd, RoundedCornerShape(26.dp), dark)
+                        .heightIn(min = BAR_BUTTON)
+                        .padding(horizontal = 18.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    GlyphIcon(R.drawable.ic_lock, sub, 18.dp)
+                    Spacer(Modifier.width(8.dp))
+                    BasicText(
+                        stringResource(R.string.chat_send_locked),
+                        style = TextStyle(color = sub, fontSize = 14.sp, lineHeight = 20.sp, textAlign = TextAlign.Center)
+                    )
                 }
+            }
+        } else {
+            Row(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .imePadding()
+                    .navigationBarsPadding()
+                    .onSizeChanged { bottomPx = it.height }      // the bar alone, without keyboard / nav bar
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                    .graphicsLayer {
+                        val a = seg(reveal(), 0.1f, 0.8f)
+                        alpha = a
+                        translationY = (1f - a) * 28.dp.toPx()
+                    },
+                verticalAlignment = Alignment.Bottom,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                GlyphIcon(
-                    R.drawable.ic_send,
-                    if (canSend) Color.White else fg.copy(alpha = 0.45f),
-                    22.dp,
-                    // the arrow points to the left: the app is right-to-left
-                    Modifier.graphicsLayer { scaleX = -1f }
-                )
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .liquidCard(chatBd, RoundedCornerShape(26.dp), dark)
+                        .heightIn(min = BAR_BUTTON)
+                        .padding(horizontal = 18.dp, vertical = 12.dp),
+                    contentAlignment = Alignment.CenterStart
+                ) {
+                    BasicTextField(
+                        value = draft,
+                        onValueChange = { draft = it },
+                        maxLines = 5,
+                        textStyle = TextStyle(
+                            color = fg, fontSize = 16.sp, lineHeight = 22.sp,
+                            textDirection = TextDirection.Content
+                        ),
+                        cursorBrush = SolidColor(AppAccent.pick(Color(0xFFFF9A2E))),
+                        modifier = Modifier.fillMaxWidth(),
+                        decorationBox = { inner ->
+                            Box(contentAlignment = Alignment.CenterStart) {
+                                if (draft.isEmpty()) {
+                                    BasicText(
+                                        stringResource(R.string.chat_hint),
+                                        style = TextStyle(color = sub, fontSize = 16.sp, lineHeight = 22.sp)
+                                    )
+                                }
+                                inner()
+                            }
+                        }
+                    )
+                }
+                GlassSurface(
+                    backdrop = chatBd,
+                    container = sendFill,
+                    modifier = Modifier.size(BAR_BUTTON),
+                    onClick = {
+                        if (canSend) {
+                            val sent = chat.send(draft) {
+                                Toast.makeText(context, failText, Toast.LENGTH_SHORT).show()
+                            }
+                            if (sent) draft = ""
+                        }
+                    }
+                ) {
+                    GlyphIcon(
+                        R.drawable.ic_send,
+                        if (canSend) Color.White else fg.copy(alpha = 0.45f),
+                        22.dp,
+                        // the arrow points to the left: the app is right-to-left
+                        Modifier.graphicsLayer { scaleX = -1f }
+                    )
+                }
             }
         }
     }
