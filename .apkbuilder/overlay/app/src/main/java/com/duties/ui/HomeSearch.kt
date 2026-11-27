@@ -65,6 +65,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -158,7 +159,7 @@ private object MorphTime : MotionDurationScale {
 
 // clock values at which the real button is invisible: opening: faded out at 0.135, back (as the X) from 0.27;
 // closing: faded out at 0.04, re-born as the bud at 0.11
-private const val BTN_HIDDEN_FROM = 0.14f
+private const val BTN_HIDDEN_FROM = 0.09f
 private const val BTN_GONE_AT = 0.05f
 
 // reference size of the pill of the animation (1080 px wide screen)
@@ -188,10 +189,7 @@ private fun buttonMorph(morph: SearchMorph, btnWPx: Float, btnHPx: Float, dropPx
                 0f, ((p[1] + p[3]) / 2f - REF_PILL_CY) * ky, 1f
             )
         }
-        if (t < 0.16f) {                                      // it turns into the drop
-            val a = 1f - smooth01((t - 0.075f) / 0.06f)
-            return floatArrayOf(0.883f, 0.977f, 0f, 5.5f * ky, a)
-        }
+        // from 0.084 the pressed button IS the drop (the layer draws it in the button's colour, no fading, no pop)
         val r = smooth01((t - 0.27f) / 0.10f)                 // the button comes back (as the X, inside the card)
         val sc = 0.6f + 0.4f * r
         return floatArrayOf(sc, sc, 0f, dropPx, r)
@@ -345,6 +343,9 @@ private val LightCard = Color(0xFFF2F2F7)
 
 /** Distance between the corner of the card and the button (the X) that sits inside it. */
 private val CARD_INSET = 14.dp
+
+/** Extra (not in the original): a sticky metaball neck while the drop leaves the button. Off = exactly the original. */
+private const val OPEN_NECK = false
 
 /** Sticky neck while opening: blur of the metaball filter (bigger = a longer, thicker neck) and when it is gone (clock). */
 private const val OPEN_NECK_BLUR = 14f
@@ -515,14 +516,17 @@ private fun SearchMorphLayer(
     val body = Rect(ax + b[0] * sx, ay + b[1] * sy, ax + b[2] * sx, ay + b[3] * sy)
     val bodyR = min(f.bodyR * u, min(body.width, body.height) / 2f)
 
-    val g = f.bodyGray / 255f
-    val bodyColor = if (dark) Color(g, g, g) else LightCard
+    val cardBase = if (dark) Color(31 / 255f, 31 / 255f, 31 / 255f) else LightCard
+    val buttonBase = if (dark) Color(0xFFC9C9CC) else Color.White           // the white glass button
+    val bodyColor = if (phase == Phase.Opening) {
+        lerp(buttonBase, cardBase, smooth01((t - 0.084f) / (0.118f - 0.084f)))
+    } else cardBase
 
     // 1) pill + card, merged by the gooey filter (metaball): while closing (as in the original) and, new, while the drop
     //    leaves the button: a rest blob of the button stays behind and fades, so a sticky neck stretches and snaps.
     val goo = remember(u) { if (Build.VERSION.SDK_INT >= 31) gooEffect(9f * u) else null }
     val gooOpen = remember(u) { if (Build.VERSION.SDK_INT >= 31) gooEffect(OPEN_NECK_BLUR * u) else null }
-    val openNeck = phase == Phase.Opening && t >= 0.084f && t <= OPEN_NECK_END
+    val openNeck = OPEN_NECK && phase == Phase.Opening && t >= 0.084f && t <= OPEN_NECK_END
     val gooNow = if (openNeck) gooOpen else goo
     Canvas(
         Modifier.fillMaxSize().graphicsLayer {
@@ -543,6 +547,15 @@ private fun SearchMorphLayer(
             }
         }
         drawRoundRect(bodyColor, body.topLeft, body.size, CornerRadius(bodyR))
+    }
+
+    // the magnifier of the button fades out on the drop (the dots of the original pill: 0.45 -> 0 by t = 0.098)
+    if (phase == Phase.Opening && f.pill != null && f.pillContent > 0.01f) {
+        Box(
+            Modifier
+                .absoluteOffset { IntOffset((body.center.x - 11.dp.toPx()).roundToInt(), (body.center.y - 11.dp.toPx()).roundToInt()) }
+                .graphicsLayer { alpha = f.pillContent }
+        ) { GlyphIcon(R.drawable.ic_search, WhiteButtonInk, 22.dp) }
     }
 
     // 2) content of the card, clipped to the animated card shape
