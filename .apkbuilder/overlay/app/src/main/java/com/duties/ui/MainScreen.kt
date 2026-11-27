@@ -330,6 +330,8 @@ private fun TabPage(
     var formScroll by remember { mutableStateOf<ScrollState?>(null) }
     // Home: the channel search is open (it covers the channel list; back closes it)
     var searching by remember { mutableStateOf(false) }
+    // clock of the liquid morph (search button -> search field), shared by the button and the search layer
+    val searchMorph = remember { SearchMorph() }
     BackHandler(enabled = searching) { searching = false }
     Box(Modifier.fillMaxSize().dotsTouch(dots)) {
         Box(Modifier.fillMaxSize().layerBackdrop(glassBackdrop)) {
@@ -379,7 +381,7 @@ private fun TabPage(
             // Home = the channels as a chat list
             if (index == 0) {
                 Spacer(Modifier.height(10.dp))
-                Box(Modifier.weight(1f)) {
+                Box(Modifier.weight(1f).onGloballyPositioned { searchMorph.listBounds = it.boundsInRoot() }) {
                     val listAlpha by animateFloatAsState(
                         if (searching) 0f else 1f, tween(240, easing = FastOutSlowInEasing), label = "homeListAlpha"
                     )
@@ -396,39 +398,42 @@ private fun TabPage(
                         hiddenChannelId = hiddenChannelId,
                         onOpenChat = onOpenChat
                     )
-                    HomeSearchPanel(
-                        visible = searching,
-                        dark = dark,
-                        backdrop = glassBackdrop,
-                        onSearch = { q -> channels.searchChannels(q) },
-                        myChannelIds = channels.channels.map { it.id }.toSet(),
-                        onJoin = { ch ->
-                            val ok = runCatching { channels.join(ch) }.onFailure { failToast() }.isSuccess
-                            if (ok) {
-                                // wait (max 4 s) until the channel shows up in my list, otherwise the chat would be
-                                // closed at once ("the channel is gone"), then close the search and open the chat
-                                val mine = withTimeoutOrNull(4000) {
-                                    snapshotFlow { channels.channels.firstOrNull { it.id == ch.id } }.filterNotNull().first()
-                                }
-                                if (mine != null) {
-                                    searching = false
-                                    onOpenChat(mine, Rect.Zero) { null }
-                                }
-                            }
-                            ok
-                        }
-                    )
                 }
             }
         }
-        // Home: the liquid glass search button, always on the RIGHT of the screen (the title is on the left).
-        // On a phone in Arabic the layout is mirrored, so "end" would be the left: the side is chosen by hand.
         if (index == 0) {
+            // the search layer (the field is born from the button like a drop): over the page, UNDER the button
+            HomeSearchPanel(
+                visible = searching,
+                morph = searchMorph,
+                dark = dark,
+                backdrop = glassBackdrop,
+                onSearch = { q -> channels.searchChannels(q) },
+                myChannelIds = channels.channels.map { it.id }.toSet(),
+                onJoin = { ch ->
+                    val ok = runCatching { channels.join(ch) }.onFailure { failToast() }.isSuccess
+                    if (ok) {
+                        // wait (max 4 s) until the channel shows up in my list, otherwise the chat would be
+                        // closed at once ("the channel is gone"), then close the search and open the chat
+                        val mine = withTimeoutOrNull(4000) {
+                            snapshotFlow { channels.channels.firstOrNull { it.id == ch.id } }.filterNotNull().first()
+                        }
+                        if (mine != null) {
+                            searching = false
+                            onOpenChat(mine, Rect.Zero) { null }
+                        }
+                    }
+                    ok
+                }
+            )
+            // the liquid glass search button, always on the RIGHT of the screen (the title is on the left).
+            // On a phone in Arabic the layout is mirrored, so "end" would be the left: the side is chosen by hand.
             val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
             HomeSearchButton(
                 open = searching,
                 dark = dark,
                 backdrop = glassBackdrop,
+                morph = searchMorph,
                 onClick = { searching = !searching },
                 delayMs = cascade.base + 120,
                 modifier = Modifier
