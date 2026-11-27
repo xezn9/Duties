@@ -3,6 +3,7 @@ package com.duties.ui
 import android.os.Build
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -37,6 +38,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
@@ -154,6 +156,11 @@ private object MorphTime : MotionDurationScale {
     override val scaleFactor: Float = MORPH_SLOWDOWN
 }
 
+// clock values at which the real button is invisible: opening: faded out at 0.135, back (as the X) from 0.27;
+// closing: faded out at 0.04, re-born as the bud at 0.11
+private const val BTN_HIDDEN_FROM = 0.14f
+private const val BTN_GONE_AT = 0.05f
+
 // reference size of the pill of the animation (1080 px wide screen)
 private const val REF_PILL_W = 301f
 private const val REF_PILL_H = 132f
@@ -228,7 +235,32 @@ internal fun HomeSearchButton(
         delay(delayMs.toLong())
         enter.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 220f))
     }
-    val t by animateFloatAsState(if (open) 1f else 0f, spring(dampingRatio = 0.62f, stiffness = 320f), label = "searchIconMorph")
+    // The icon follows the morph, not the tap: it stays a magnifier while the button is pressed / melts into the drop,
+    // and turns into the X only while the button is hidden (the X is then born inside the card). Closing: the X is
+    // gone at once and the magnifier is back before the button re-forms as the bud.
+    val iconTarget by remember {
+        derivedStateOf {
+            val c = morph.clock.value
+            when (morph.phase) {
+                Phase.Closed -> 0f
+                Phase.Opening -> if (c >= BTN_HIDDEN_FROM) 1f else 0f
+                Phase.Open -> 1f
+                Phase.Closing -> if (c < BTN_GONE_AT) 1f else 0f
+            }
+        }
+    }
+    val iconHidden by remember {
+        derivedStateOf {
+            val c = morph.clock.value
+            (morph.phase == Phase.Opening && c >= BTN_HIDDEN_FROM && c < 0.27f) ||
+                (morph.phase == Phase.Closing && c >= BTN_GONE_AT && c < 0.11f)
+        }
+    }
+    val t by animateFloatAsState(
+        iconTarget,
+        if (iconHidden) snap() else spring(dampingRatio = 0.62f, stiffness = 320f),
+        label = "searchIconMorph"
+    )
 
     Box(
         modifier
