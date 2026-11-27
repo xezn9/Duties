@@ -29,6 +29,8 @@ class DutiesApplication : Application() {
         runCatching { com.duties.ui.GlassTheme.load(this) }
         // the app color chosen in Settings > App theme
         runCatching { com.duties.ui.AppAccent.load(this) }
+        // animation speed: phone on 1.0x -> the app's animations run at 0.5x; phone on 0.5x -> unchanged
+        runCatching { AnimationSpeed.install(this) }
         // the notification channel of the chat pushes (FCM)
         runCatching { Push.createChannel(this) }
         val previous = Thread.getDefaultUncaughtExceptionHandler()
