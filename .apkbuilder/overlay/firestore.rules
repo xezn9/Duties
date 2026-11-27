@@ -18,6 +18,8 @@ rules_version = '2';
 //                        kick = remove an ordinary member (he can join again if the channel is public)
 //                        edit = change the channel information (name, @username, bio, photo)
 //                      A supervisor can never act on the owner or on another supervisor.
+// channels.adminTitles: map  uid -> the custom name the owner gave to that supervisor (shown instead of "Supervisor").
+//                      Written only by the owner (a text of at most 14 characters, set by the app).
 // channels.banned     : list of uids that are banned from the channel (written by the owner or by a supervisor with "ban")
 // channels.restricted : OLD field of the removed "restrict" feature. Still allowed so old channels stay valid; not used.
 // invites/{channelId}_{uid} : an invitation to a channel (pending / accepted / declined)
@@ -80,12 +82,13 @@ service cloud.firestore {
     // admins: uids | adminPerms: map uid -> list | banned: uids
     function validChannel(d) {
       return d.keys().hasOnly(['name', 'username', 'bio', 'ownerUid', 'members', 'photo', 'isPublic', 'createdAt',
-                               'admins', 'adminPerms', 'banned', 'restricted'])
+                               'admins', 'adminPerms', 'adminTitles', 'banned', 'restricted'])
         && validChannelInfo(d)
         && d.ownerUid == request.auth.uid
         && (!('isPublic' in d.keys()) || d.isPublic is bool)
         && (!('admins' in d.keys()) || d.admins is list)
         && (!('adminPerms' in d.keys()) || d.adminPerms is map)
+        && (!('adminTitles' in d.keys()) || d.adminTitles is map)
         && (!('banned' in d.keys()) || d.banned is list)
         && (!('restricted' in d.keys()) || d.restricted is list);
     }

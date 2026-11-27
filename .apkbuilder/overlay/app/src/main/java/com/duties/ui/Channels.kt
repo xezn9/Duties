@@ -23,7 +23,7 @@ import java.io.ByteArrayOutputStream
  * Channels.kt — channels and invitations of the signed-in account, kept on Firestore.
  *
  *   channels/{id}              = { name, username, bio, ownerUid, members[uid], photo (small JPEG, base64), isPublic, createdAt,
- *                                  admins[uid], adminPerms{uid: ["ban","kick","edit"]}, banned[uid] }
+ *                                  admins[uid], adminPerms{uid: ["ban","kick","edit"]}, adminTitles{uid: "custom name"}, banned[uid] }
  *   channelUsernames/{lower}   = { uid, channelId }                    (every channel @username is unique)
  *   invites/{channelId}_{toUid} = { channelId, channelName, channelUsername, channelPhoto, fromUid, fromName,
  *                                  fromUsername, toUid, status: pending | accepted | declined, createdAt }
@@ -53,6 +53,8 @@ class Channel(
      * [Perm.EDIT]. A supervisor that is not in the map can only write messages.
      */
     val adminPerms: Map<String, Set<String>> = emptyMap(),
+    /** The name the OWNER gave to each supervisor (shown next to him instead of "Supervisor"). No entry = the default word. */
+    val adminTitles: Map<String, String> = emptyMap(),
     /** uids of the banned people: they are not members and can not join (or accept an invitation) until the ban is lifted. */
     val banned: List<String> = emptyList(),
     /** True when the signed-in account is banned from this channel (the search shows "banned" instead of Join). */
@@ -65,6 +67,9 @@ class Channel(
     fun can(uid: String, perm: String): Boolean =
         ownerUid == uid || (uid in admins && perm in (adminPerms[uid] ?: emptySet()))
 }
+
+/** Longest custom name the owner can give to a supervisor. */
+const val ADMIN_TITLE_MAX = 14
 
 /** The things the owner can allow a supervisor to do. The values are what is stored in Firestore / the Realtime Database. */
 object Perm {
@@ -167,6 +172,11 @@ class ChannelsState(private val uid: String) {
                 perms[k] = (v as? List<*>)?.filterIsInstance<String>()?.filter { it in Perm.ALL }?.toSet() ?: emptySet()
             }
         }
+        // the custom names the owner gave to the supervisors: { uid: "name" } (only for people who are still supervisors)
+        val titles = HashMap<String, String>()
+        (d.get("adminTitles") as? Map<*, *>)?.forEach { (k, v) ->
+            if (k is String && k in adminUids && v is String && v.isNotBlank()) titles[k] = v.take(ADMIN_TITLE_MAX)
+        }
         val bannedUids = (d.get("banned") as? List<*>)?.filterIsInstance<String>()?.distinct() ?: emptyList()
         return Channel(
             id = d.id,
@@ -182,6 +192,7 @@ class ChannelsState(private val uid: String) {
             isPublic = d.getBoolean("isPublic") ?: true,
             admins = adminUids,
             adminPerms = perms,
+            adminTitles = titles,
             banned = bannedUids,
             bannedMe = uid in bannedUids
         )
@@ -327,7 +338,8 @@ class ChannelsState(private val uid: String) {
         } else {
             ref.update(
                 "admins", FieldValue.arrayRemove(targetUid),
-                FieldPath.of("adminPerms", targetUid), FieldValue.delete()
+                FieldPath.of("adminPerms", targetUid), FieldValue.delete(),
+                FieldPath.of("adminTitles", targetUid), FieldValue.delete()
             ).await()
         }
         ChatRooms.setAdmin(channel.id, targetUid, admin)
@@ -346,6 +358,20 @@ class ChannelsState(private val uid: String) {
     }
 
     /**
+     * Owner only: the name that is shown next to a supervisor instead of "Supervisor". An empty [title] goes back to the
+     * default word. It is only a label (nothing in the chat room depends on it), so it lives in Firestore only.
+     */
+    suspend fun setAdminTitle(channel: Channel, targetUid: String, title: String) {
+        if (!channel.isOwner || targetUid == channel.ownerUid || targetUid !in channel.admins) return
+        val clean = title.trim().take(ADMIN_TITLE_MAX)
+        val ref = FirebaseFirestore.getInstance().collection("channels").document(channel.id)
+        ref.update(
+            FieldPath.of("adminTitles", targetUid),
+            if (clean.isEmpty()) FieldValue.delete() else clean
+        ).await()
+    }
+
+    /**
      * The owner, or a supervisor with the "kick" permission: removes a member from the channel (and from its chat room).
      * He can still join again if the channel is public. Nobody can kick the owner, and a supervisor can not kick another
      * supervisor (only the owner can).
@@ -359,7 +385,8 @@ class ChannelsState(private val uid: String) {
             ref.update(
                 "members", FieldValue.arrayRemove(targetUid),
                 "admins", FieldValue.arrayRemove(targetUid),
-                FieldPath.of("adminPerms", targetUid), FieldValue.delete()
+                FieldPath.of("adminPerms", targetUid), FieldValue.delete(),
+                FieldPath.of("adminTitles", targetUid), FieldValue.delete()
             ).await()
         } else {
             ref.update("members", FieldValue.arrayRemove(targetUid)).await()
@@ -386,7 +413,8 @@ class ChannelsState(private val uid: String) {
                     "members", FieldValue.arrayRemove(targetUid),
                     "banned", FieldValue.arrayUnion(targetUid),
                     "admins", FieldValue.arrayRemove(targetUid),
-                    FieldPath.of("adminPerms", targetUid), FieldValue.delete()
+                    FieldPath.of("adminPerms", targetUid), FieldValue.delete(),
+                    FieldPath.of("adminTitles", targetUid), FieldValue.delete()
                 ).await()
             } else {
                 ref.update(

@@ -36,6 +36,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -51,6 +54,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -62,6 +66,7 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
@@ -70,6 +75,9 @@ import androidx.compose.ui.unit.sp
 import com.duties.R
 import com.google.firebase.firestore.FirebaseFirestore
 import com.kyant.backdrop.Backdrop
+import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+import com.kyant.backdrop.catalog.components.LiquidDialog
 import com.kyant.backdrop.catalog.components.LiquidToggle
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -245,6 +253,10 @@ private fun ChannelEditPage(
         // the member whose options panel is open (owner, or a supervisor that may kick / ban)
         var menuUid by remember { mutableStateOf<String?>(null) }
         BackHandler(enabled = menuUid != null) { menuUid = null }
+        // the "kick / ban this member?" question (a LiquidDialog). The three values stay while the dialog fades out
+        var askShow by remember { mutableStateOf(false) }
+        var askUid by remember { mutableStateOf("") }
+        var askBan by remember { mutableStateOf(false) }
 
         val nameOk = isValidName(name)
         val userOk = isValidUsername(username)
@@ -311,12 +323,21 @@ private fun ChannelEditPage(
         // owner only: supervisor on / off, and what each supervisor may do
         fun setAdmin(target: String, on: Boolean) = act(false) { channels.setAdmin(channel, target, on) }
         fun setPerm(target: String, perm: String, on: Boolean) = act(false) { channels.setAdminPerm(channel, target, perm, on) }
+        fun setTitle(target: String, title: String) = act(false) { channels.setAdminTitle(channel, target, title) }
         fun kick(target: String) = act(true) { channels.kickMember(channel, target) }
         fun ban(target: String) = act(true) { channels.banMember(channel, target) }
         fun unban(target: String) = act(false) { channels.unbanMember(channel, target) }
 
+        // Records the WHOLE page, so the dialog's glass refracts everything behind it.
+        val screenBackdrop = rememberLayerBackdrop()
+        // What the glass of the page refracts: only the dotted background (like Settings / Account).
+        val glassBackdrop = rememberLayerBackdrop()
+        val dots = rememberDotsState()
+
         Box(Modifier.fillMaxSize()) {
-            LiquidScene(dark, photo) { bd ->
+            Box(Modifier.fillMaxSize().layerBackdrop(screenBackdrop).dotsTouch(dots)) {
+                Box(Modifier.fillMaxSize().layerBackdrop(glassBackdrop)) { DotBackground(dots, dark) }
+                val bd: Backdrop = glassBackdrop
                 LazyColumn(
                     Modifier
                         .fillMaxSize()
@@ -447,6 +468,7 @@ private fun ChannelEditPage(
                             uid = memberUid,
                             isOwnerRow = memberUid == channel.ownerUid,
                             isAdmin = memberUid in channel.admins,
+                            adminTitle = channel.adminTitles[memberUid].orEmpty(),
                             isMe = memberUid == uid,
                             // the options button: never on the owner's row or on my own. The owner has it on everybody;
                             // a supervisor only on ordinary members and only if he may kick or ban
@@ -503,10 +525,12 @@ private fun ChannelEditPage(
                             bd = bd,
                             dark = dark,
                             fg = fg,
+                            adminTitle = channel.adminTitles[menuTarget].orEmpty(),
                             onAdmin = { on -> setAdmin(menuTarget, on) },
                             onPerm = { perm, on -> setPerm(menuTarget, perm, on) },
-                            onKick = { kick(menuTarget) },
-                            onBan = { ban(menuTarget) },
+                            onTitle = { t -> setTitle(menuTarget, t) },
+                            onAskKick = { askUid = menuTarget; askBan = false; askShow = true },
+                            onAskBan = { askUid = menuTarget; askBan = true; askShow = true },
                             onDismiss = { menuUid = null }
                         )
                     } else {
@@ -515,6 +539,24 @@ private fun ChannelEditPage(
                     }
                 }
             }
+
+            // ---- kick / ban: asks first (outside the recorded box, as the LiquidDialog README says)
+            val askName = MemberDirectory.info[askUid]?.name?.takeIf { it.isNotBlank() } ?: stringResource(R.string.member_this)
+            LiquidDialog(
+                visible = askShow,
+                onDismiss = { askShow = false },
+                backdrop = screenBackdrop,
+                dark = dark,
+                title = stringResource(if (askBan) R.string.member_ban_title else R.string.member_kick_title),
+                message = stringResource(if (askBan) R.string.member_ban_msg else R.string.member_kick_msg, askName),
+                confirmText = stringResource(if (askBan) R.string.member_ban_yes else R.string.member_kick_yes),
+                dismissText = stringResource(R.string.cancel),
+                confirmTint = EditRed,
+                onConfirm = {
+                    askShow = false
+                    if (askBan) ban(askUid) else kick(askUid)
+                }
+            )
 
             // ---- "move the picture" page on top
             cropping?.let { (src, tf) ->
@@ -627,6 +669,7 @@ private fun MemberRow(
     uid: String,
     isOwnerRow: Boolean,
     isAdmin: Boolean,
+    adminTitle: String,
     isMe: Boolean,
     showMenu: Boolean,
     onMenu: () -> Unit,
@@ -675,15 +718,19 @@ private fun MemberRow(
                     style = TextStyle(color = fg, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 )
                 // one small badge: owner, supervisor, or "you"
-                val badge: Pair<Int, Color>? = when {
-                    isOwnerRow -> R.string.channel_owner_badge to EditOrange
-                    isAdmin -> R.string.channel_admin_badge to EditMint
-                    isMe -> R.string.channel_you_badge to EditViolet
+                // (for a supervisor: the name the owner chose, or the default word)
+                val ownerWord = stringResource(R.string.channel_owner_badge)
+                val adminWord = stringResource(R.string.channel_admin_badge)
+                val youWord = stringResource(R.string.channel_you_badge)
+                val badge: Pair<String, Color>? = when {
+                    isOwnerRow -> ownerWord to EditOrange
+                    isAdmin -> (if (adminTitle.isBlank()) adminWord else adminTitle) to EditMint
+                    isMe -> youWord to EditViolet
                     else -> null
                 }
                 if (badge != null) {
                     Spacer(Modifier.width(8.dp))
-                    Badge(stringResource(badge.first), badge.second)
+                    Badge(badge.first, badge.second)
                 }
             }
             if (username.isNotEmpty()) {
@@ -712,8 +759,9 @@ private fun MemberRow(
  * The options of one member: a glass panel over the page. A tap outside the panel (or Back) closes it.
  *  - the OWNER sees "Make supervisor" (a switch). When the member is a supervisor, the owner also sees what that supervisor
  *    may do: Ban members / Kick members / Edit the channel information, one switch each (all off for a new supervisor).
- *  - Kick and Ban are buttons that ask for a second tap. The owner has both; a supervisor only the ones the owner allowed
- *    him ([canKick], [canBan]).
+ *  - the OWNER can also type the name that is shown next to that supervisor (instead of "Supervisor").
+ *  - Kick and Ban are buttons; each one asks the question in a LiquidDialog (the page shows it: [onAskKick] / [onAskBan]).
+ *    The owner has both; a supervisor only the ones the owner allowed him ([canKick], [canBan]).
  * The panel scrolls when it is taller than the screen.
  */
 @Composable
@@ -723,6 +771,7 @@ private fun MemberMenu(
     myName: String,
     myPhoto: Bitmap?,
     isAdmin: Boolean,
+    adminTitle: String,
     perms: Set<String>,
     isOwnerMe: Boolean,
     canKick: Boolean,
@@ -732,14 +781,13 @@ private fun MemberMenu(
     fg: Color,
     onAdmin: (Boolean) -> Unit,
     onPerm: (String, Boolean) -> Unit,
-    onKick: () -> Unit,
-    onBan: () -> Unit,
+    onTitle: (String) -> Unit,
+    onAskKick: () -> Unit,
+    onAskBan: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val a = remember { Animatable(0f) }
     LaunchedEffect(Unit) { a.animateTo(1f, spring(dampingRatio = 0.78f, stiffness = 420f)) }
-    // which red button waits for its second tap: 0 = none, 1 = kick, 2 = ban
-    var confirm by remember { mutableStateOf(0) }
 
     val info = MemberDirectory.info[uid]
     val name = info?.name ?: if (isMe) myName else ""
@@ -754,6 +802,7 @@ private fun MemberMenu(
             .pointerInput(Unit) { detectTapGestures { onDismiss() } }
             .statusBarsPadding()
             .navigationBarsPadding()
+            .imePadding()
             .padding(vertical = 12.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -809,6 +858,7 @@ private fun MemberMenu(
                     bd = bd, dark = dark, fg = fg
                 )
                 if (isAdmin) {
+                    AdminTitleField(current = adminTitle, bd = bd, fg = fg, onSave = onTitle)
                     Spacer(Modifier.height(4.dp))
                     BasicText(
                         stringResource(R.string.member_menu_perms_title),
@@ -840,48 +890,101 @@ private fun MemberMenu(
                 Spacer(Modifier.height(10.dp))
             }
 
-            // ---- kick / ban: the first tap asks, the second one does it
+            // ---- kick / ban: a tap opens the question (LiquidDialog), the dialog's red button does it
             if (canKick) {
-                DangerButton(
-                    text = stringResource(R.string.member_menu_kick),
-                    confirmText = stringResource(R.string.member_menu_kick_confirm),
-                    confirming = confirm == 1,
-                    onClick = { if (confirm == 1) onKick() else confirm = 1 }
-                )
+                DangerButton(text = stringResource(R.string.member_menu_kick), onClick = onAskKick)
             }
             if (canKick && canBan) Spacer(Modifier.height(8.dp))
             if (canBan) {
-                DangerButton(
-                    text = stringResource(R.string.member_menu_ban),
-                    confirmText = stringResource(R.string.member_menu_ban_confirm),
-                    confirming = confirm == 2,
-                    onClick = { if (confirm == 2) onBan() else confirm = 2 }
-                )
+                DangerButton(text = stringResource(R.string.member_menu_ban), onClick = onAskBan)
             }
         }
     }
 }
 
-/** A red button that asks for a second tap: the first tap turns it solid red and shows [confirmText]. */
+/** A soft red button (kick / ban). It does not act by itself: it opens the question dialog. */
 @Composable
-private fun DangerButton(text: String, confirmText: String, confirming: Boolean, onClick: () -> Unit) {
+private fun DangerButton(text: String, onClick: () -> Unit) {
     Box(
         Modifier
             .fillMaxWidth()
             .height(50.dp)
             .clip(RoundedCornerShape(25.dp))
-            .background(EditRed.copy(alpha = if (confirming) 0.95f else 0.18f))
+            .background(EditRed.copy(alpha = 0.18f))
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         BasicText(
-            if (confirming) confirmText else text,
-            style = TextStyle(
-                color = if (confirming) Color.White else EditRed,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold
-            )
+            text,
+            style = TextStyle(color = EditRed, fontSize = 16.sp, fontWeight = FontWeight.Bold)
         )
+    }
+}
+
+/**
+ * Owner only, for a supervisor: the name that is shown next to him instead of "Supervisor" (at most [ADMIN_TITLE_MAX]
+ * letters). The check button appears when the text changed (the keyboard's Done does the same); empty = the default word.
+ */
+@Composable
+private fun AdminTitleField(current: String, bd: Backdrop, fg: Color, onSave: (String) -> Unit) {
+    var text by remember(current) { mutableStateOf(current) }
+    val focus = LocalFocusManager.current
+    val dirty = text.trim() != current
+    val fieldShape = RoundedCornerShape(23.dp)
+    fun commit() {
+        if (dirty) onSave(text.trim())
+        focus.clearFocus()
+    }
+
+    Column(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 6.dp)) {
+        BasicText(
+            stringResource(R.string.admin_title_label),
+            style = TextStyle(color = fg, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+        )
+        Spacer(Modifier.height(2.dp))
+        BasicText(
+            stringResource(R.string.admin_title_sub),
+            style = TextStyle(color = fg.copy(alpha = 0.6f), fontSize = 12.sp)
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier
+                    .weight(1f)
+                    .height(46.dp)
+                    .clip(fieldShape)
+                    .background(fg.copy(alpha = 0.08f))
+                    .border(1.dp, fg.copy(alpha = 0.14f), fieldShape)
+                    .padding(horizontal = 16.dp),
+                contentAlignment = Alignment.CenterStart
+            ) {
+                if (text.isEmpty()) {
+                    BasicText(
+                        stringResource(R.string.channel_admin_badge),
+                        style = TextStyle(color = fg.copy(alpha = 0.35f), fontSize = 15.sp)
+                    )
+                }
+                BasicTextField(
+                    value = text,
+                    onValueChange = { text = it.replace("\n", "").take(ADMIN_TITLE_MAX) },
+                    singleLine = true,
+                    textStyle = TextStyle(color = fg, fontSize = 15.sp, fontWeight = FontWeight.SemiBold),
+                    cursorBrush = SolidColor(EditMint),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { commit() }),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+            if (dirty) {
+                Spacer(Modifier.width(8.dp))
+                GlassSurface(
+                    backdrop = bd,
+                    container = EditMint.copy(alpha = 0.85f),
+                    modifier = Modifier.size(46.dp),
+                    onClick = { commit() }
+                ) { GlyphIcon(R.drawable.ic_check, Color.White, 22.dp) }
+            }
+        }
     }
 }
 
