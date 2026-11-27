@@ -167,7 +167,7 @@ private fun buttonMorph(morph: SearchMorph, btnWPx: Float, btnHPx: Float): Float
             val a = 1f - smooth01((t - 0.075f) / 0.06f)
             return floatArrayOf(0.883f, 0.977f, 0f, 5.5f * ky, a)
         }
-        val r = smooth01((t - 0.16f) / 0.14f)                 // the button comes back
+        val r = smooth01((t - 0.27f) / 0.10f)                 // the button comes back (as the X, inside the card)
         val sc = 0.6f + 0.4f * r
         return floatArrayOf(sc, sc, 0f, 0f, r)
     }
@@ -292,6 +292,9 @@ private class SearchClip(
 }
 
 private val LightCard = Color(0xFFF2F2F7)
+
+/** Distance between the corner of the card and the button (the X) that sits inside it. */
+private val CARD_INSET = 14.dp
 
 @Composable
 private fun SearchContent(
@@ -418,7 +421,7 @@ private const val REF_W_PX = 1080f
  *  3) glass rim
  * The frames come from frameFor() untouched. They are only placed on this screen:
  *  - the pill of the original = the search button (its rect is the "rest" rect);
- *  - the card is anchored to the button (right edges line up) and sits just under it, so the button stays visible as the X.
+ *  - the card grows OUT of the button: it covers it, and the button comes back as the X inside the card's top corner.
  * Only this composable reads the animation clock, so only it recomposes every frame.
  */
 @Composable
@@ -440,11 +443,11 @@ private fun SearchMorphLayer(
     // when the card is fully open (k = 1) it is at 1 : 1 scale, right edge on the button's right edge, under the button.
     val s0x = rest.width / (REF_PILL_W * u)
     val s0y = rest.height / (REF_PILL_H * u)
-    val gap = with(density) { 8.dp.toPx() }
+    val inset = with(density) { CARD_INSET.toPx() }      // the button (now the X) sits this far inside the card's corner
     val ax0 = rest.center.x - 366.5f * u * s0x
     val ay0 = rest.center.y - REF_PILL_CY * u * s0y
-    val axF = rest.right - FINAL_BODY[2] * u
-    val ayF = rest.bottom + gap - FINAL_BODY[1] * u
+    val axF = rest.right + inset - FINAL_BODY[2] * u
+    val ayF = rest.top - inset - FINAL_BODY[1] * u
     val k = ((b[3] - 288f) / (1449f - 288f)).coerceIn(0f, 1f)      // how far the card has grown out of the pill
     val ax = ax0 + (axF - ax0) * k
     val ay = ay0 + (ayF - ay0) * k
@@ -481,7 +484,7 @@ private fun SearchMorphLayer(
         val cardH = CARD_H * u
         // part of the settled card the keyboard would cover: the list gets that much bottom padding
         val finalBottom = ayF + FINAL_BODY[3] * u
-        val inset = (finalBottom - screenBottom).coerceIn(0f, cardH * 0.6f)
+        val keyboardInset = (finalBottom - screenBottom).coerceIn(0f, cardH * 0.6f)
         Box(
             Modifier.fillMaxSize().graphicsLayer {
                 clip = true
@@ -505,7 +508,7 @@ private fun SearchMorphLayer(
                     .pointerInput(Unit) { detectTapGestures { } }       // taps on the card never close it
             ) {
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-                    content(inset)
+                    content(keyboardInset)
                 }
             }
         }
@@ -546,15 +549,17 @@ private fun SearchCard(
     bottomInset: Dp,
     onJoin: (Channel) -> Unit
 ) {
-    Column(Modifier.fillMaxSize().padding(start = 14.dp, end = 14.dp, top = 14.dp)) {
-        // the field
+    Column(Modifier.fillMaxSize().padding(start = CARD_INSET, end = CARD_INSET, top = CARD_INSET)) {
+        // top row: [X button (drawn above the card by HomeSearchButton)] [the field]
+        Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+        Spacer(Modifier.width(48.dp + 8.dp))
         Row(
             Modifier
-                .fillMaxWidth()
+                .weight(1f)
                 .height(46.dp)
                 .clip(RoundedCornerShape(50))
                 .background(textColor.copy(alpha = 0.08f))
-                .padding(horizontal = 14.dp),
+                .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             GlyphIcon(R.drawable.ic_search, subColor, 19.dp)
@@ -579,6 +584,7 @@ private fun SearchCard(
                     modifier = Modifier.fillMaxWidth().focusRequester(fr)
                 )
             }
+        }
         }
         // the answer
         if (message == null && list != null) {
