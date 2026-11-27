@@ -153,7 +153,7 @@ internal class SearchMorph {
 }
 
 /** How much slower than the original video the morph plays (1 = exactly like the video). */
-private const val MORPH_SLOWDOWN = 1.2f
+private const val MORPH_SLOWDOWN = 1f
 
 private object MorphTime : MotionDurationScale {
     override val scaleFactor: Float = MORPH_SLOWDOWN
@@ -425,10 +425,10 @@ private val LightCard = Color(0xFFF2F2F7)
 internal val CARD_INSET = 14.dp
 
 /** Blur of the metaball filter while closing (the original uses 9; a bit more = the card sticks to the button earlier). */
-private const val CLOSE_GOO_BLUR = 13f
+private const val CLOSE_GOO_BLUR = 9f
 
 /** Extra (not in the original): a sticky metaball neck while the drop leaves the button. Off = exactly the original. */
-private const val OPEN_NECK = true
+private const val OPEN_NECK = false
 
 /** Sticky neck while opening: blur of the metaball filter (bigger = a longer, thicker neck) and when it is gone (clock). */
 private const val OPEN_NECK_BLUR = 12f
@@ -608,12 +608,14 @@ private fun SearchMorphLayer(
     val bodyR = min(f.bodyR * u, min(body.width, body.height) / 2f)
 
     val cardBase = if (dark) Color(31 / 255f, 31 / 255f, 31 / 255f) else LightCard
-    val buttonBase = if (dark) Color(0xFF2A2A2E) else Color(0xFFEDEDF0)     // the menu-colored glass button (drop colour)
+    // dark = EXACTLY the original colours (pressed pill 86 -> 31 while it becomes the drop, pill / card 31 while closing)
+    val buttonBase = if (dark) cardBase else Color(0xFFEDEDF0)
     val bodyColor = when (phase) {
-        Phase.Opening -> lerp(buttonBase, cardBase, smooth01((t - 0.084f) / (0.118f - 0.084f)))
+        Phase.Opening -> if (dark) Color(f.bodyGray / 255f, f.bodyGray / 255f, f.bodyGray / 255f)
+        else lerp(buttonBase, cardBase, smooth01((t - 0.084f) / (0.118f - 0.084f)))
         // closing: the card takes the colour of the button while it shrinks, so when it touches the bud they melt into
         // ONE shape (the original pill is dark like the card; this button is light, a dark neck would only stick on it)
-        Phase.Closing -> lerp(cardBase, buttonBase, smooth01((t - 0.06f) / 0.16f))
+        Phase.Closing -> if (dark) cardBase else lerp(cardBase, buttonBase, smooth01((t - 0.06f) / 0.16f))
         else -> cardBase
     }
 
