@@ -105,7 +105,7 @@ import kotlin.math.sin
  * touching or dragging anywhere else on the screen does nothing.
  *
  * The back button and the apply button are the liquid glass of the app; the two arrows and the "original
- * color" button are white LiquidButtons. The glass refracts the dotted background AND the books, because
+ * color" button are MenuGlassButtons (the glass of the bottom menu). The glass refracts the dotted background AND the books, because
  * the books are drawn inside the same backdrop layer.
  *
  * Opening: every part comes out of the row that was tapped (Emerge). Going back is the opposite: the open
@@ -129,8 +129,8 @@ private fun AppColorShelf(dark: Boolean, onClose: () -> Unit) {
     val haptic = LocalHapticFeedback.current
     val cutoutTop = WindowInsets.displayCutout.asPaddingValues().calculateTopPadding()
 
-    // the white buttons (arrows, original color) need dark ink
-    val whiteInk = WhiteButtonInk
+    // the buttons (arrows, original color) have the glass of the menu: its ink (white on dark, black on light)
+    val whiteInk = menuInk(dark)
     // 0..1 while the page is going back (the shelf closes, everything melts toward the row it came from)
     val leave = LocalPushLeave.current
 
@@ -279,12 +279,13 @@ private fun AppColorShelf(dark: Boolean, onClose: () -> Unit) {
             modifier = Modifier.align(Alignment.TopEnd).padding(top = cutoutTop + 10.dp, end = 16.dp)
         ) {
             Leave(start = 0.12f) {
-                GlassSurface(
+                MenuGlassButton(
                     backdrop = sceneBackdrop,
-                    container = glassContainer,
+                    dark = dark,
                     modifier = Modifier.size(48.dp),
+                    horizontalPadding = 0.dp,
                     onClick = onClose
-                ) { GlyphIcon(R.drawable.ic_back, fg, 22.dp) }
+                ) { GlyphIcon(R.drawable.ic_back, menuInk(dark), 22.dp) }
             }
         }
 
@@ -406,8 +407,9 @@ private fun AppColorShelf(dark: Boolean, onClose: () -> Unit) {
             modifier = Modifier.align(Alignment.TopStart).offset { IntOffset(20.dp.roundToPx(), arrowY) }
         ) {
             Leave(start = 0f) {
-                WhiteLiquidButton(
+                MenuGlassButton(
                     backdrop = sceneBackdrop,
+                    dark = dark,
                     modifier = Modifier.size(48.dp),
                     horizontalPadding = 0.dp,
                     onClick = { t = t.roundToInt() - 1f }
@@ -419,8 +421,9 @@ private fun AppColorShelf(dark: Boolean, onClose: () -> Unit) {
             modifier = Modifier.align(Alignment.TopEnd).offset { IntOffset(-20.dp.roundToPx(), arrowY) }
         ) {
             Leave(start = 0f) {
-                WhiteLiquidButton(
+                MenuGlassButton(
                     backdrop = sceneBackdrop,
+                    dark = dark,
                     modifier = Modifier.size(48.dp),
                     horizontalPadding = 0.dp,
                     onClick = { t = t.roundToInt() + 1f }
@@ -434,8 +437,9 @@ private fun AppColorShelf(dark: Boolean, onClose: () -> Unit) {
             modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 22.dp)
         ) {
             Leave(start = 0f) {
-                WhiteLiquidButton(
+                MenuGlassButton(
                     backdrop = sceneBackdrop,
+                    dark = dark,
                     modifier = Modifier.width(230.dp).height(48.dp),
                     onClick = {
                         if (AppAccent.active) {

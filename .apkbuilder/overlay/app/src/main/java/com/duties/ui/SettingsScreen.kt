@@ -117,12 +117,13 @@ private fun SettingsMain(dark: Boolean, onClose: () -> Unit, onTheme: (Rect?) ->
                 // ---- top bar: close + title
                 Emerge(delayMs = 40, modifier = Modifier.fillMaxWidth()) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        WhiteLiquidButton(
+                        MenuGlassButton(
                             backdrop = glassBackdrop,
+                            dark = dark,
                             modifier = Modifier.size(48.dp),
                             horizontalPadding = 0.dp,
                             onClick = onClose
-                        ) { GlyphIcon(R.drawable.ic_close, WhiteButtonInk, 22.dp) }
+                        ) { GlyphIcon(R.drawable.ic_close, menuInk(dark), 22.dp) }
                         Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
                             BasicText(
                                 stringResource(R.string.settings_title),

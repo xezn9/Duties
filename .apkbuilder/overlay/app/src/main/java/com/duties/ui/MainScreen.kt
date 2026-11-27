@@ -72,6 +72,8 @@ import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 private val TAB_TITLES = listOf(R.string.tab_home, R.string.tab_create, R.string.tab_account)
+// the big title of each page (the tab bar uses TAB_TITLES)
+private val PAGE_TITLES = listOf(R.string.title_home, R.string.title_create, R.string.tab_account)
 private val TAB_ICONS = listOf(R.drawable.ic_tab_home, R.drawable.ic_tab_create, R.drawable.ic_tab_account)
 
 /** The 3 tabs (Home, Create, Account) with the liquid glass bar and the HyperSpring wave between tabs. */
@@ -420,10 +422,11 @@ private fun TabPage(
         // the page title, above the search layer and under the search button
         Box(Modifier.fillMaxWidth().statusBarsPadding().padding(top = 20.dp)) {
             SplitTitle(
-                text = stringResource(TAB_TITLES[index]),
+                text = stringResource(PAGE_TITLES[index]),
                 delayMs = titleDelay,
                 color = textColor,
-                fontSize = 40.sp,
+                // the two longer titles are smaller so they stay on one line (Home also leaves room for the search button)
+                fontSize = if (index == 2) 40.sp else 28.sp,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 24.dp)

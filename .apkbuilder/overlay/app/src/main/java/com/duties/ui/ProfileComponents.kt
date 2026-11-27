@@ -165,6 +165,37 @@ fun WhiteLiquidButton(
     )
 }
 
+/** The glass tint of the bottom bar (menu). Buttons that must look like the menu use the very same tint. */
+fun menuGlassColor(dark: Boolean): Color =
+    if (dark) Color(0xFF2A2A2E).copy(0.16f) else Color(0xFFFAFAFA).copy(0.4f)
+
+/** Ink (icons / text) of the bottom bar: white on the dark theme, black on the light one. */
+fun menuInk(dark: Boolean): Color = if (dark) Color.White else Color.Black
+
+/**
+ * A button with the SAME glass as the bottom bar (menu): no white fill, only the thin menu tint, so the page shows
+ * through. Used for search, close, back, the arrows and "original color". Put icons / text of color [menuInk] on it.
+ * For a round button: Modifier.size(48.dp) + horizontalPadding = 0.dp.
+ */
+@Composable
+fun MenuGlassButton(
+    backdrop: Backdrop,
+    dark: Boolean,
+    modifier: Modifier = Modifier,
+    horizontalPadding: Dp = 16.dp,
+    onClick: () -> Unit,
+    content: @Composable RowScope.() -> Unit
+) {
+    LiquidButton(
+        onClick = onClick,
+        backdrop = backdrop,
+        modifier = modifier,
+        surfaceColor = menuGlassColor(dark),
+        horizontalPadding = horizontalPadding,
+        content = content
+    )
+}
+
 /** Dark round button (close, etc.) used on the colorful screens. */
 @Composable
 fun DarkCircleButton(@DrawableRes icon: Int, size: Dp = 52.dp, onClick: () -> Unit) {

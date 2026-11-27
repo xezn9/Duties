@@ -4,6 +4,9 @@
     <string name="tab_home">Home</string>
     <string name="tab_create">Create</string>
     <string name="tab_account">Account</string>
+    <!-- page titles (the tab bar keeps the short names above) -->
+    <string name="title_home">Home, Your chats</string>
+    <string name="title_create">Create, Your channels</string>
     <string name="login_subtitle">Sign in to keep your duties in sync.</string>
     <string name="continue_google">Continue with Google</string>
     <string name="signing_in">Signing in…</string>

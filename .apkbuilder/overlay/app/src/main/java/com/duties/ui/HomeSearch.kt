@@ -277,16 +277,17 @@ internal fun HomeSearchButton(
                 rotationZ = (1f - e) * -70f
             }
     ) {
-        WhiteLiquidButton(
+        MenuGlassButton(
             onClick = onClick,
             backdrop = backdrop,
+            dark = dark,
             modifier = Modifier.size(48.dp),
             horizontalPadding = 0.dp
         ) {
             // both icons sit on the same spot
             Box(Modifier.requiredSize(22.dp)) {
                 GlyphIcon(
-                    R.drawable.ic_search, WhiteButtonInk, 22.dp,
+                    R.drawable.ic_search, menuInk(dark), 22.dp,
                     Modifier.graphicsLayer {
                         val k = t.coerceIn(0f, 1f)
                         rotationZ = t * 90f
@@ -296,7 +297,7 @@ internal fun HomeSearchButton(
                     }
                 )
                 GlyphIcon(
-                    R.drawable.ic_close, WhiteButtonInk, 22.dp,
+                    R.drawable.ic_close, menuInk(dark), 22.dp,
                     Modifier.graphicsLayer {
                         val k = t.coerceIn(0f, 1f)
                         rotationZ = (t - 1f) * 90f
@@ -525,7 +526,7 @@ private fun SearchMorphLayer(
     val bodyR = min(f.bodyR * u, min(body.width, body.height) / 2f)
 
     val cardBase = if (dark) Color(31 / 255f, 31 / 255f, 31 / 255f) else LightCard
-    val buttonBase = if (dark) Color(0xFFC9C9CC) else Color.White           // the white glass button
+    val buttonBase = if (dark) Color(0xFF2A2A2E) else Color(0xFFEDEDF0)     // the menu-colored glass button (drop colour)
     val bodyColor = when (phase) {
         Phase.Opening -> lerp(buttonBase, cardBase, smooth01((t - 0.084f) / (0.118f - 0.084f)))
         // closing: the card takes the colour of the button while it shrinks, so when it touches the bud they melt into
@@ -586,7 +587,7 @@ private fun SearchMorphLayer(
             Modifier
                 .absoluteOffset { IntOffset((body.center.x - 11.dp.toPx()).roundToInt(), (body.center.y - 11.dp.toPx()).roundToInt()) }
                 .graphicsLayer { alpha = f.pillContent }
-        ) { GlyphIcon(R.drawable.ic_search, WhiteButtonInk, 22.dp) }
+        ) { GlyphIcon(R.drawable.ic_search, menuInk(dark), 22.dp) }
     }
 
     // 2) content of the card, clipped to the animated card shape
