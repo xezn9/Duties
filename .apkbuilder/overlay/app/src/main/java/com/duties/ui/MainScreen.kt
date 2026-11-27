@@ -410,6 +410,7 @@ private fun TabPage(
                 backdrop = glassBackdrop,
                 onSearch = { q -> channels.searchChannels(q) },
                 myChannelIds = channels.channels.map { it.id }.toSet(),
+                onDismiss = { searching = false },
                 onJoin = { ch ->
                     val ok = runCatching { channels.join(ch) }.onFailure { failToast() }.isSuccess
                     if (ok) {

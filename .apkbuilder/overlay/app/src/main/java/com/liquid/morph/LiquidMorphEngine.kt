@@ -33,9 +33,9 @@ import kotlin.math.min
 internal const val OPEN_T = 0.80f   // press -> fully settled
 internal const val CLOSE_T = 0.60f  // close start -> pill settled
 
-private const val REF_W = 1080f
-private const val CARD_W = 750f
-private const val CARD_H = 1293f
+internal const val REF_W = 1080f
+internal const val CARD_W = 750f
+internal const val CARD_H = 1293f
 
 private val BodyColor = Color(0xFF1F1F1F)
 private val Yellow = Color(0xFFE2AD08)
@@ -44,8 +44,8 @@ private val RedColor = Color(0xFFFD3F42)
 private val SubGray = Color(0xFF8E8E93)
 private val DividerColor = Color(0xFF3C3C3C)
 
-private val REST_PILL = floatArrayOf(216f, 156f, 517f, 288f)
-private val FINAL_BODY = floatArrayOf(24f, 156f, 774f, 1449f)
+internal val REST_PILL = floatArrayOf(216f, 156f, 517f, 288f)
+internal val FINAL_BODY = floatArrayOf(24f, 156f, 774f, 1449f)
 
 // ---------------------------------------------------------------------------
 // Measured keyframes.  Row layout is documented above each table.
