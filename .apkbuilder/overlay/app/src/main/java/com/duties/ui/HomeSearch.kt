@@ -102,8 +102,10 @@ import com.liquid.morph.smooth01
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.PI
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 /*
  * HomeSearch.kt — search for channels from the Home tab.
@@ -344,12 +346,18 @@ private val LightCard = Color(0xFFF2F2F7)
 /** Distance between the corner of the card and the button (the X) that sits inside it. */
 private val CARD_INSET = 14.dp
 
+/** Blur of the metaball filter while closing (the original uses 9; a bit more = the card sticks to the button earlier). */
+private const val CLOSE_GOO_BLUR = 13f
+
 /** Extra (not in the original): a sticky metaball neck while the drop leaves the button. Off = exactly the original. */
-private const val OPEN_NECK = false
+private const val OPEN_NECK = true
 
 /** Sticky neck while opening: blur of the metaball filter (bigger = a longer, thicker neck) and when it is gone (clock). */
-private const val OPEN_NECK_BLUR = 14f
+private const val OPEN_NECK_BLUR = 12f
 private const val OPEN_NECK_END = 0.26f
+
+/** The neck snaps when the drop is this far (reference px) from the button; the bigger, the longer it stretches. */
+private const val OPEN_NECK_REACH = 520f
 
 /** Gap between the title row (the button's rest place) and the top of the card. */
 private val CARD_GAP = 10.dp
@@ -518,13 +526,17 @@ private fun SearchMorphLayer(
 
     val cardBase = if (dark) Color(31 / 255f, 31 / 255f, 31 / 255f) else LightCard
     val buttonBase = if (dark) Color(0xFFC9C9CC) else Color.White           // the white glass button
-    val bodyColor = if (phase == Phase.Opening) {
-        lerp(buttonBase, cardBase, smooth01((t - 0.084f) / (0.118f - 0.084f)))
-    } else cardBase
+    val bodyColor = when (phase) {
+        Phase.Opening -> lerp(buttonBase, cardBase, smooth01((t - 0.084f) / (0.118f - 0.084f)))
+        // closing: the card takes the colour of the button while it shrinks, so when it touches the bud they melt into
+        // ONE shape (the original pill is dark like the card; this button is light, a dark neck would only stick on it)
+        Phase.Closing -> lerp(cardBase, buttonBase, smooth01((t - 0.06f) / 0.16f))
+        else -> cardBase
+    }
 
     // 1) pill + card, merged by the gooey filter (metaball): while closing (as in the original) and, new, while the drop
     //    leaves the button: a rest blob of the button stays behind and fades, so a sticky neck stretches and snaps.
-    val goo = remember(u) { if (Build.VERSION.SDK_INT >= 31) gooEffect(9f * u) else null }
+    val goo = remember(u) { if (Build.VERSION.SDK_INT >= 31) gooEffect(CLOSE_GOO_BLUR * u) else null }
     val gooOpen = remember(u) { if (Build.VERSION.SDK_INT >= 31) gooEffect(OPEN_NECK_BLUR * u) else null }
     val openNeck = OPEN_NECK && phase == Phase.Opening && t >= 0.084f && t <= OPEN_NECK_END
     val gooNow = if (openNeck) gooOpen else goo
@@ -538,12 +550,31 @@ private fun SearchMorphLayer(
             val a = 1f - smooth01((t - 0.084f) / (OPEN_NECK_END - 0.084f))
             val r = mapPill(floatArrayOf(232f, 163f, 498f, 292f), rest)      // the pressed button = where the drop is born
             drawRoundRect(bodyColor.copy(alpha = a), r.topLeft, r.size, CornerRadius(min(r.width, r.height) / 2f))
+
+            // The sticky neck: a string of circles from the button to the drop, thin in the middle, thicker at both
+            // ends. The goo filter melts them into one stretched bridge. It thins out as the drop moves away and
+            // snaps at OPEN_NECK_REACH (the original drop leaves the button in ~3 frames, so this is what lets you SEE it).
+            val sx0 = r.center.x
+            val sy0 = r.center.y
+            val ex = body.center.x
+            val ey = body.top + body.height * 0.15f
+            val dist = ey - sy0
+            val reach = OPEN_NECK_REACH * u
+            val strength = smooth01(1f - dist / reach) * (1f - smooth01((t - 0.15f) / (OPEN_NECK_END - 0.15f)))
+            val r0 = min(r.width, r.height) * 0.36f * strength
+            if (r0 > 0.5f && dist > 0f) {
+                val n = (dist / (r0 * 0.7f)).toInt().coerceIn(4, 48)
+                for (i in 1 until n) {
+                    val q = i / n.toFloat()
+                    val rad = r0 * (1f - 0.72f * sin(PI.toFloat() * q))
+                    drawCircle(bodyColor, rad, Offset(sx0 + (ex - sx0) * q, sy0 + (ey - sy0) * q))
+                }
+            }
         }
         if (phase == Phase.Closing && f.goo) {
             f.pill?.let { p ->
                 val r = mapPill(p, rest)
-                val c = if (dark) Color(31 / 255f, 31 / 255f, 31 / 255f, f.pillAlpha) else LightCard.copy(alpha = f.pillAlpha)
-                drawRoundRect(c, r.topLeft, r.size, CornerRadius(min(r.width, r.height) / 2f))
+                drawRoundRect(buttonBase.copy(alpha = f.pillAlpha), r.topLeft, r.size, CornerRadius(min(r.width, r.height) / 2f))
             }
         }
         drawRoundRect(bodyColor, body.topLeft, body.size, CornerRadius(bodyR))
