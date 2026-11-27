@@ -44,6 +44,7 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -333,6 +334,10 @@ private fun TabPage(
     // clock of the liquid morph (search button -> search field), shared by the button and the search layer
     val searchMorph = remember { SearchMorph() }
     BackHandler(enabled = searching) { searching = false }
+    // The title is drawn ABOVE the search layer (the card of the morph stays under "Home"), so it is composed after the
+    // layer. It takes its place in the cascade first, and the page leaves room for it with a spacer of its height.
+    val titleDelay = remember { cascade.take() }
+    var titleH by remember { mutableIntStateOf(0) }
     Box(Modifier.fillMaxSize().dotsTouch(dots)) {
         Box(Modifier.fillMaxSize().layerBackdrop(glassBackdrop)) {
             DotBackground(dots, dark)
@@ -343,24 +348,8 @@ private fun TabPage(
                 .statusBarsPadding()
                 .padding(top = 20.dp)
         ) {
-            SplitTitle(
-                text = stringResource(TAB_TITLES[index]),
-                delayMs = remember { cascade.take() },
-                color = textColor,
-                fontSize = 40.sp,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp)
-                    .zIndex(1f)
-                    .graphicsLayer {
-                        // part of the form: it goes up with it (1:1) and melts away like the rest of the form does
-                        val s = (formScroll?.value ?: 0).toFloat()
-                        translationY = -s
-                        val k = (s / 90.dp.toPx()).coerceIn(0f, 1f)
-                        alpha = 1f - k
-                        renderEffect = blurEffect(12.dp.toPx() * k)
-                    }
-            )
+            // room for the title (drawn further down, above the search layer)
+            Spacer(Modifier.height(with(LocalDensity.current) { titleH.toDp() }))
             // Create = the swipeable pages that explain how to create a channel (continues the tab's cascade).
             if (index == 1) {
                 Spacer(Modifier.height(14.dp))
@@ -427,6 +416,29 @@ private fun TabPage(
                     ok
                 }
             )
+        }
+        // the page title, above the search layer and under the search button
+        Box(Modifier.fillMaxWidth().statusBarsPadding().padding(top = 20.dp)) {
+            SplitTitle(
+                text = stringResource(TAB_TITLES[index]),
+                delayMs = titleDelay,
+                color = textColor,
+                fontSize = 40.sp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp)
+                    .onSizeChanged { titleH = it.height }
+                    .graphicsLayer {
+                        // part of the form: it goes up with it (1:1) and melts away like the rest of the form does
+                        val s = (formScroll?.value ?: 0).toFloat()
+                        translationY = -s
+                        val k = (s / 90.dp.toPx()).coerceIn(0f, 1f)
+                        alpha = 1f - k
+                        renderEffect = blurEffect(12.dp.toPx() * k)
+                    }
+            )
+        }
+        if (index == 0) {
             // the liquid glass search button, always on the RIGHT of the screen (the title is on the left).
             // On a phone in Arabic the layout is mirrored, so "end" would be the left: the side is chosen by hand.
             val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl

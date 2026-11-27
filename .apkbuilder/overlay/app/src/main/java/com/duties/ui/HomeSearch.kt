@@ -43,6 +43,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.MotionDurationScale
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
@@ -82,6 +83,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.duties.AnimationSpeed
 import com.duties.R
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.catalog.components.LiquidButton
@@ -96,6 +98,7 @@ import com.liquid.morph.gooEffect
 import com.liquid.morph.smooth01
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.min
 import kotlin.math.roundToInt
 
@@ -125,16 +128,30 @@ internal class SearchMorph {
             if (phase == Phase.Open) return
             clock.snapTo(0f)                      // reset first, then switch the phase (no stale frame)
             phase = Phase.Opening
-            clock.animateTo(OPEN_T, tween((OPEN_T * 1000).toInt(), easing = LinearEasing))
+            playClock(OPEN_T)
             phase = Phase.Open
         } else {
             if (phase == Phase.Closed) return
             clock.snapTo(0f)
             phase = Phase.Closing
-            clock.animateTo(CLOSE_T, tween((CLOSE_T * 1000).toInt(), easing = LinearEasing))
+            playClock(CLOSE_T)
             phase = Phase.Closed
         }
     }
+
+    private suspend fun playClock(total: Float) {
+        val go = suspend { clock.animateTo(total, tween((total * 1000).toInt(), easing = LinearEasing)) }
+        // AnimationSpeed (the app speeds every animation up 2x) must not touch this clock: the measured timeline
+        // of the original plays in its real time, slowed down by MORPH_SLOWDOWN. (phone animations off = 0 = skip)
+        if (AnimationSpeed.scaleFactor == 0f) go() else withContext(MorphTime) { go() }
+    }
+}
+
+/** How much slower than the original video the morph plays (1 = exactly like the video). */
+private const val MORPH_SLOWDOWN = 1.2f
+
+private object MorphTime : MotionDurationScale {
+    override val scaleFactor: Float = MORPH_SLOWDOWN
 }
 
 // reference size of the pill of the animation (1080 px wide screen)
@@ -329,7 +346,7 @@ private fun SearchContent(
     // the keyboard comes up when the card has landed and goes away with the close
     LaunchedEffect(visible) {
         if (visible) {
-            delay(380)
+            delay(560)
             runCatching { fr.requestFocus() }
         } else {
             focus.clearFocus()
