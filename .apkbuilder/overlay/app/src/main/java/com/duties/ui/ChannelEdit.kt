@@ -126,6 +126,10 @@ import kotlinx.coroutines.tasks.await
  *     Only the owner and the supervisors can write in the channel.
  *   - under the members: the BANNED people (only for those who may ban) with a button that lifts the ban.
  *
+ * LOOK (redesigned): one accent colour (the app colour), a calm hero (photo in a thin ring, name, @username), ONE slim strip
+ * for the three numbers, ONE glass sheet for the fields, and the members / banned on ONE soft sheet each. The Save button
+ * stays dim until something was changed. The page opens as a sheet that grows out of the name bar (see ChannelEditMorph).
+ *
  * It is drawn inside the chat's sliding layer (see ChatScreen.kt), so it slides away together with the chat.
  */
 
@@ -133,10 +137,16 @@ private val EditOrange = Color(0xFFFF8A1F)
 private val EditViolet = Color(0xFF8A5CFF)
 private val EditMint = Color(0xFF00D4AA)
 private val EditRed = Color(0xFFE5484D)
-private val MEMBER_PHOTO = 46.dp
+private val MEMBER_PHOTO = 44.dp
 
-private const val EDIT_OPEN_MS = 430
-private const val EDIT_CLOSE_MS = 330
+/** The accent of the page: the app color the person chose (orange when none). Everything coloured here uses it. */
+private val EditAccent: Color get() = AppAccent.pick(EditOrange)
+
+/** The pieces of the page start rising this long after the page starts opening (the sheet is already growing). */
+private const val INTRO_BASE_MS = 150L
+
+private const val EDIT_OPEN_MS = 560
+private const val EDIT_CLOSE_MS = 340
 
 // =====================================================================
 // Names of the members (users/{uid}); their small photos come from UserPhotos
@@ -171,12 +181,17 @@ internal object MemberDirectory {
 }
 
 // =====================================================================
-// The page that grows out of the name bar
+// The page that opens out of the name bar
 // =====================================================================
 
 /**
- * Hosts the page. [open] = true shows it (it grows out of [from], the place of the name bar), false plays the way
- * back. [onOpenProfile] opens the profile of a member (ChatMorph hosts that page, above this one).
+ * Hosts the page. [open] = true shows it, false plays the way back. [onOpenProfile] opens the profile of a member
+ * (ChatMorph hosts that page, above this one).
+ *
+ * THE OPENING: the page is ONE sheet that starts exactly on the name bar ([from]) and grows to the whole screen:
+ * first it gets wide (the width runs a little ahead), then it falls down to the bottom while its corners straighten.
+ * The chat under it dims. The content is never squashed: it is only revealed by the growing sheet, it fades in and
+ * settles from slightly bigger, and then the pieces (photo, numbers, fields, members) rise one after another.
  */
 @Composable
 internal fun ChannelEditMorph(
@@ -200,7 +215,7 @@ internal fun ChannelEditMorph(
         if (open) {
             visible = true
             p.snapTo(0f)
-            p.animateTo(1f, tween(EDIT_OPEN_MS, easing = OPEN_EASE))
+            p.animateTo(1f, tween(EDIT_OPEN_MS, easing = CIRCLE_GROW))
         } else if (visible) {
             p.animateTo(0f, tween(EDIT_CLOSE_MS, easing = CLOSE_EASE))
             visible = false
@@ -208,34 +223,59 @@ internal fun ChannelEditMorph(
     }
     if (!visible) return
 
+    val base = if (dark) Color.Black else Color(0xFFF4F5F9)
+
     Box(
         Modifier
             .fillMaxSize()
-            .graphicsLayer {
-                val k = p.value
-                val s = 0.55f + 0.45f * k
-                scaleX = s
-                scaleY = s
-                alpha = seg(k, 0f, 0.55f)
-                transformOrigin = TransformOrigin(
-                    if (size.width > 0f) (from.center.x / size.width).coerceIn(0f, 1f) else 0.5f,
-                    if (size.height > 0f) (from.center.y / size.height).coerceIn(0f, 1f) else 0.1f
-                )
-                clip = true
-                shape = RoundedCornerShape(((1f - k) * 44f).dp)
-            }
-            .pointerInput(Unit) { detectTapGestures { } }            // covers the chat below
+            .drawBehind { drawRect(Color.Black.copy(alpha = 0.5f * p.value)) }       // the chat dims
+            .pointerInput(Unit) { detectTapGestures { } }                            // covers the chat below
     ) {
-        ChannelEditPage(
-            channel = channel,
-            channels = channels,
-            dark = dark,
-            uid = uid,
-            myName = myName,
-            myPhoto = myPhoto,
-            onClose = onClose,
-            onOpenProfile = onOpenProfile
-        )
+        Box(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    val k = p.value
+                    val w = size.width
+                    val h = size.height
+                    // the starting rectangle: the name bar (a bar at the top if its place is not known)
+                    val bar = if (from.width > 1f && from.height > 1f) from
+                    else Rect(w * 0.18f, 40.dp.toPx(), w * 0.82f, 96.dp.toPx())
+                    val kx = FastOutSlowInEasing.transform(seg(k, 0f, 0.8f))        // the width runs a little ahead
+                    val r = Rect(
+                        lerpF(bar.left, 0f, kx),
+                        lerpF(bar.top, 0f, k),
+                        lerpF(bar.right, w, kx),
+                        lerpF(bar.bottom, h, k)
+                    )
+                    shape = RoundedRectClip(r, lerpF(bar.height / 2f, 0f, k).coerceAtLeast(0f))
+                    clip = true
+                }
+                .background(base)
+        ) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        val k = p.value
+                        alpha = seg(k, 0.10f, 0.50f)
+                        val s = 1.05f - 0.05f * k
+                        scaleX = s
+                        scaleY = s
+                    }
+            ) {
+                ChannelEditPage(
+                    channel = channel,
+                    channels = channels,
+                    dark = dark,
+                    uid = uid,
+                    myName = myName,
+                    myPhoto = myPhoto,
+                    onClose = onClose,
+                    onOpenProfile = onOpenProfile
+                )
+            }
+        }
     }
 }
 
@@ -255,6 +295,7 @@ private fun ChannelEditPage(
         val scope = rememberCoroutineScope()
         val focus = LocalFocusManager.current
         val fg = if (dark) Color.White else Color(0xFF101114)
+        val accent = EditAccent
         // what the signed-in account may do here: the owner everything, a supervisor what the owner gave him
         val isOwnerMe = channel.isOwner
         val canEdit = channel.can(uid, Perm.EDIT)          // change name / @username / bio / photo
@@ -286,6 +327,8 @@ private fun ChannelEditPage(
         val nameOk = isValidName(name)
         val userOk = isValidUsername(username)
         val changed = name.trim() != channel.name || username != channel.username || bio.trim() != channel.bio || photoChanged
+        // the problems show as soon as something was changed (the Save button stays dim until everything is right)
+        val showErr = showErrors || changed
         val loadError = stringResource(R.string.error_image_load)
         val saveError = stringResource(R.string.error_save)
         val actionError = stringResource(R.string.error_member_action)
@@ -367,38 +410,37 @@ private fun ChannelEditPage(
                 // the first moments: the pieces rise one after another; rows that scroll in later do not replay it
                 var intro by remember { mutableStateOf(true) }
                 LaunchedEffect(Unit) {
-                    delay(1600)
+                    delay(1800)
                     intro = false
                 }
                 // the page uses the WHOLE screen: the list scrolls under the status bar and the navigation bar
                 val topInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
                 val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
                 val fadeBase = if (dark) Color.Black else Color(0xFFF4F5F9)
+                // the flat rows of the members / banned lists (one soft sheet per list, not one card per person)
+                val rowFill = if (dark) Color.White.copy(alpha = 0.07f) else Color.White.copy(alpha = 0.75f)
 
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize().imePadding(),
                     contentPadding = PaddingValues(
                         start = 16.dp, end = 16.dp,
-                        top = topInset + 68.dp,
-                        bottom = bottomInset + 28.dp
+                        top = topInset + 74.dp,
+                        bottom = bottomInset + 32.dp
                     )
                 ) {
-                    // ---- the hero: big photo with a turning ring, the name, the @username and three numbers
+                    // ---- the hero: the photo inside a thin turning ring, the name and the @username
                     item(key = "hero") {
                         ChannelHero(
                             listState = listState,
-                            bd = bd,
                             dark = dark,
                             fg = fg,
+                            accent = accent,
                             photo = photo,
                             name = name.ifBlank { channel.name },
                             username = username,
                             canEdit = canEdit,
                             canMove = photoSource != null,
-                            memberCount = ordered.size,
-                            adminCount = channel.admins.size,
-                            isPublic = channel.isPublic,
                             animate = intro,
                             onPick = {
                                 picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
@@ -407,26 +449,41 @@ private fun ChannelEditPage(
                         )
                     }
 
+                    // ---- three numbers in ONE slim glass strip
+                    item(key = "stats") {
+                        Rise(delayMs = 330, animate = intro, modifier = Modifier.padding(top = 22.dp)) {
+                            StatsStrip(
+                                bd = bd,
+                                dark = dark,
+                                fg = fg,
+                                accent = accent,
+                                memberCount = ordered.size,
+                                adminCount = channel.admins.size,
+                                isPublic = channel.isPublic
+                            )
+                        }
+                    }
+
                     // ---- name + @username + bio: ONE glass sheet, the fields are its rows
                     item(key = "info") {
-                        Rise(delayMs = 330, animate = intro, modifier = Modifier.padding(top = 18.dp)) {
-                            Column(Modifier.fillMaxWidth().liquidCard(bd, RoundedCornerShape(32.dp), dark)) {
+                        Rise(delayMs = 410, animate = intro, modifier = Modifier.padding(top = 14.dp)) {
+                            Column(Modifier.fillMaxWidth().liquidCard(bd, RoundedCornerShape(28.dp), dark)) {
                                 SheetField(
                                     icon = R.drawable.ic_tab_account,
-                                    tint = EditOrange,
+                                    tint = accent,
                                     label = stringResource(R.string.create_field_name),
                                     value = name,
                                     maxLen = NAME_MAX,
                                     fg = fg,
                                     onValueChange = { name = it.replace("\n", "").take(NAME_MAX) },
-                                    error = if (showErrors && !nameOk) stringResource(R.string.error_name_empty) else null,
+                                    error = if (showErr && !nameOk) stringResource(R.string.error_name_empty) else null,
                                     keyboardType = KeyboardType.Text,
                                     readOnly = !canEdit
                                 )
                                 SheetDivider(fg)
                                 SheetField(
                                     icon = R.drawable.ic_at,
-                                    tint = EditViolet,
+                                    tint = accent,
                                     label = stringResource(R.string.create_field_username),
                                     value = username,
                                     maxLen = USERNAME_MAX,
@@ -437,7 +494,7 @@ private fun ChannelEditPage(
                                     },
                                     error = when {
                                         usernameTaken -> stringResource(R.string.error_username_taken)
-                                        showErrors && !userOk -> stringResource(R.string.error_username_short)
+                                        showErr && !userOk -> stringResource(R.string.error_username_short)
                                         else -> null
                                     },
                                     countBad = username.length < USERNAME_MIN,
@@ -449,7 +506,7 @@ private fun ChannelEditPage(
                                     SheetDivider(fg)
                                     SheetField(
                                         icon = R.drawable.ic_chat,
-                                        tint = EditMint,
+                                        tint = accent,
                                         label = stringResource(R.string.create_win_bio_label),
                                         value = bio,
                                         maxLen = BIO_MAX,
@@ -466,23 +523,23 @@ private fun ChannelEditPage(
                         }
                     }
 
-                    // ---- members: flat rows (no card each), they slide in one after another
+                    // ---- members: ONE soft sheet, the rows slide in one after another
                     item(key = "membersHeader") {
                         Rise(
-                            delayMs = 420,
+                            delayMs = 490,
                             animate = intro,
-                            modifier = Modifier.padding(top = 26.dp, bottom = 4.dp, start = 8.dp, end = 8.dp)
+                            modifier = Modifier.padding(top = 28.dp, bottom = 10.dp, start = 8.dp, end = 8.dp)
                         ) {
                             BasicText(
                                 stringResource(R.string.channel_members_header, ordered.size),
-                                style = TextStyle(color = fg.copy(alpha = 0.75f), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                                style = TextStyle(color = fg.copy(alpha = 0.7f), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                             )
                         }
                     }
                     itemsIndexed(ordered, key = { _, m -> "m_$m" }) { index, memberUid ->
                         MemberRow(
                             modifier = Modifier.animateItem(),
-                            enterDelay = 470 + minOf(index, 8) * 55,
+                            enterDelay = 540 + minOf(index, 8) * 50,
                             animate = intro,
                             uid = memberUid,
                             isOwnerRow = memberUid == channel.ownerUid,
@@ -496,8 +553,9 @@ private fun ChannelEditPage(
                             onMenu = { menuUid = memberUid },
                             myName = myName,
                             myPhoto = myPhoto,
-                            bd = bd,
-                            dark = dark,
+                            first = index == 0,
+                            last = index == ordered.lastIndex,
+                            fill = rowFill,
                             fg = fg,
                             onOpenProfile = onOpenProfile
                         )
@@ -508,16 +566,17 @@ private fun ChannelEditPage(
                         item(key = "bannedHeader") {
                             BasicText(
                                 stringResource(R.string.channel_banned_header, channel.banned.size),
-                                modifier = Modifier.animateItem().padding(top = 26.dp, bottom = 8.dp, start = 8.dp, end = 8.dp),
-                                style = TextStyle(color = EditRed.copy(alpha = 0.9f), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                                modifier = Modifier.animateItem().padding(top = 28.dp, bottom = 10.dp, start = 8.dp, end = 8.dp),
+                                style = TextStyle(color = EditRed.copy(alpha = 0.9f), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                             )
                         }
-                        items(channel.banned, key = { "b_$it" }) { bannedUid ->
+                        itemsIndexed(channel.banned, key = { _, b -> "b_$b" }) { index, bannedUid ->
                             BannedRow(
                                 modifier = Modifier.animateItem(),
                                 uid = bannedUid,
                                 onUnban = { unban(bannedUid) },
-                                bd = bd,
+                                first = index == 0,
+                                last = index == channel.banned.lastIndex,
                                 dark = dark,
                                 fg = fg,
                                 onOpenProfile = onOpenProfile
@@ -531,8 +590,8 @@ private fun ChannelEditPage(
                     Modifier
                         .align(Alignment.TopCenter)
                         .fillMaxWidth()
-                        .height(topInset + 86.dp)
-                        .background(Brush.verticalGradient(listOf(fadeBase.copy(alpha = 0.94f), fadeBase.copy(alpha = 0f))))
+                        .height(topInset + 90.dp)
+                        .background(Brush.verticalGradient(listOf(fadeBase.copy(alpha = 0.95f), fadeBase.copy(alpha = 0f))))
                 )
                 Rise(
                     delayMs = 0,
@@ -543,33 +602,29 @@ private fun ChannelEditPage(
                         .statusBarsPadding()
                         .padding(horizontal = 16.dp, vertical = 10.dp)
                 ) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    // close on one side, Save on the other, the title in the middle
+                    Box(Modifier.fillMaxWidth().height(48.dp)) {
                         GlassSurface(
                             backdrop = bd,
                             container = if (dark) Color(0xFF121212).copy(alpha = 0.40f) else Color.White.copy(alpha = 0.50f),
-                            modifier = Modifier.size(48.dp),
+                            modifier = Modifier.align(Alignment.CenterStart).size(48.dp),
                             onClick = onClose
                         ) { GlyphIcon(R.drawable.ic_close, fg, 22.dp) }
-                        Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
-                            BasicText(
-                                stringResource(if (canEdit) R.string.channel_edit_title else R.string.channel_info_title),
-                                style = TextStyle(color = fg, fontSize = 23.sp, fontWeight = FontWeight.Bold)
-                            )
-                            BasicText(
-                                stringResource(if (canEdit) R.string.channel_edit_subtitle else R.string.channel_info_subtitle),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                style = TextStyle(color = fg.copy(alpha = 0.6f), fontSize = 12.sp)
-                            )
-                        }
+                        BasicText(
+                            stringResource(if (canEdit) R.string.channel_edit_title else R.string.channel_info_title),
+                            modifier = Modifier.align(Alignment.Center),
+                            style = TextStyle(color = fg, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                        )
                         if (canEdit) {
-                            SaveButton(
-                                backdrop = bd,
-                                enabled = !saving && (!showErrors || (nameOk && userOk && !usernameTaken)),
-                                saving = saving,
-                                done = saved,
-                                onClick = ::trySave
-                            )
+                            Box(Modifier.align(Alignment.CenterEnd)) {
+                                SaveButton(
+                                    backdrop = bd,
+                                    enabled = changed && !saving && nameOk && userOk && !usernameTaken,
+                                    saving = saving,
+                                    done = saved,
+                                    onClick = ::trySave
+                                )
+                            }
                         }
                     }
                 }
@@ -667,69 +722,66 @@ private fun Rise(delayMs: Int, animate: Boolean, modifier: Modifier = Modifier, 
     val a = remember { Animatable(if (animate) 0f else 1f) }
     LaunchedEffect(Unit) {
         if (animate) {
-            delay(delayMs.toLong())
-            a.animateTo(1f, tween(640, easing = SETTLE))
+            delay(INTRO_BASE_MS + delayMs.toLong())
+            a.animateTo(1f, tween(600, easing = SETTLE))
         }
     }
     Box(
         modifier.graphicsLayer {
             val t = a.value
             alpha = (t * 1.6f).coerceIn(0f, 1f)
-            translationY = 38.dp.toPx() * (1f - t)
-            val sc = 0.93f + 0.07f * t
+            translationY = 30.dp.toPx() * (1f - t)
+            val sc = 0.94f + 0.06f * t
             scaleX = sc
             scaleY = sc
-            renderEffect = if (t < 1f) blurEffect(10.dp.toPx() * (1f - t)) else null
+            renderEffect = if (t < 1f) blurEffect(8.dp.toPx() * (1f - t)) else null
         }
     ) { content() }
 }
 
 /**
- * The top of the page: the channel photo inside a slowly turning colour ring (it pops in with a spring, and breathes),
- * the name, the @username, and three numbers that count up. When the list scrolls, the whole block drifts slower than
- * the rest, shrinks and fades.
+ * The top of the page: the channel photo inside a thin colour ring that turns slowly (the photo pops in with a spring),
+ * under it the name and the @username (they follow what is typed), and two small text buttons: change the photo, and
+ * - after a photo was picked - move it. Tapping the photo changes it too. When the list scrolls, the block drifts slower
+ * than the rest, shrinks and fades.
  */
 @Composable
 private fun ChannelHero(
     listState: LazyListState,
-    bd: Backdrop,
     dark: Boolean,
     fg: Color,
+    accent: Color,
     photo: Bitmap?,
     name: String,
     username: String,
     canEdit: Boolean,
     canMove: Boolean,
-    memberCount: Int,
-    adminCount: Int,
-    isPublic: Boolean,
     animate: Boolean,
     onPick: () -> Unit,
     onMove: () -> Unit
 ) {
-    val pop = remember { Animatable(if (animate) 0.4f else 1f) }
+    val pop = remember { Animatable(if (animate) 0.5f else 1f) }
     val appear = remember { Animatable(if (animate) 0f else 1f) }
     LaunchedEffect(Unit) {
         if (animate) {
-            delay(70)
-            launch { appear.animateTo(1f, tween(380)) }
-            pop.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 260f))
+            delay(INTRO_BASE_MS + 40L)
+            launch { appear.animateTo(1f, tween(340)) }
+            pop.animateTo(1f, spring(dampingRatio = 0.55f, stiffness = 280f))
         }
     }
     val inf = rememberInfiniteTransition(label = "heroRing")
     val spin by inf.animateFloat(
         initialValue = 0f,
         targetValue = 360f,
-        animationSpec = infiniteRepeatable(tween(9000, easing = LinearEasing)),
+        animationSpec = infiniteRepeatable(tween(12000, easing = LinearEasing)),
         label = "spin"
     )
     val breathe by inf.animateFloat(
-        initialValue = 0.28f,
-        targetValue = 0.60f,
-        animationSpec = infiniteRepeatable(tween(2600, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        initialValue = 0.16f,
+        targetValue = 0.40f,
+        animationSpec = infiniteRepeatable(tween(2800, easing = FastOutSlowInEasing), RepeatMode.Reverse),
         label = "breathe"
     )
-    val glass = Color(0xFF121212).copy(alpha = 0.40f)
 
     Column(
         Modifier
@@ -737,17 +789,17 @@ private fun ChannelHero(
             .graphicsLayer {
                 // parallax: read in the layer, so scrolling does not recompose anything
                 val off = if (listState.firstVisibleItemIndex == 0) listState.firstVisibleItemScrollOffset.toFloat() else 4000f
-                val t = (off / 650f).coerceIn(0f, 1f)
+                val t = (off / 600f).coerceIn(0f, 1f)
                 translationY = off * 0.35f
                 alpha = 1f - t
-                scaleX = 1f - 0.12f * t
-                scaleY = 1f - 0.12f * t
+                scaleX = 1f - 0.10f * t
+                scaleY = 1f - 0.10f * t
             },
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
             Modifier
-                .size(176.dp)
+                .size(144.dp)
                 .graphicsLayer {
                     scaleX = pop.value
                     scaleY = pop.value
@@ -755,15 +807,16 @@ private fun ChannelHero(
                 }
                 .drawBehind {
                     val r = size.minDimension / 2f
+                    // a soft glow that breathes, and a thin ring that turns
                     drawCircle(
-                        Brush.radialGradient(listOf(EditViolet.copy(alpha = breathe), Color.Transparent), center = center, radius = r * 1.3f),
-                        radius = r * 1.3f
+                        Brush.radialGradient(listOf(accent.copy(alpha = breathe), Color.Transparent), center = center, radius = r * 1.35f),
+                        radius = r * 1.35f
                     )
                     rotate(spin) {
                         drawCircle(
-                            Brush.sweepGradient(listOf(EditOrange, EditViolet, EditMint, EditOrange), center),
-                            radius = r - 2.dp.toPx(),
-                            style = Stroke(3.5f.dp.toPx())
+                            Brush.sweepGradient(listOf(accent, accent.copy(alpha = 0.10f), accent), center),
+                            radius = r - 1.5.dp.toPx(),
+                            style = Stroke(2.5f.dp.toPx())
                         )
                     }
                 },
@@ -772,108 +825,104 @@ private fun ChannelHero(
             Avatar(
                 photo = photo,
                 name = name,
-                size = 146.dp,
-                modifier = if (canEdit) Modifier.clickable(onClick = onPick) else Modifier
+                size = 122.dp,
+                modifier = if (canEdit) {
+                    Modifier.clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onPick)
+                } else Modifier
             )
-            if (canEdit) {
-                Box(
-                    Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(10.dp)
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(AppAccent.deep(Color(0xFFDB7608)))
-                        .border(1.5.dp, Color.White.copy(alpha = 0.5f), CircleShape)
-                        .clickable(onClick = onPick),
-                    contentAlignment = Alignment.Center
-                ) { GlyphIcon(R.drawable.ic_edit, Color.White, 20.dp) }
-            }
         }
 
-        Spacer(Modifier.height(10.dp))
-        Rise(delayMs = 140, animate = animate) {
+        Spacer(Modifier.height(14.dp))
+        Rise(delayMs = 130, animate = animate) {
             BasicText(
                 name,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                style = TextStyle(color = fg, fontSize = 27.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center),
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)
+                style = TextStyle(color = fg, fontSize = 25.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)
             )
         }
         if (username.isNotBlank()) {
-            Spacer(Modifier.height(6.dp))
-            Rise(delayMs = 190, animate = animate) {
-                Box(
-                    Modifier
-                        .animateContentSize()
-                        .clip(RoundedCornerShape(50))
-                        .background(fg.copy(alpha = 0.09f))
-                        .padding(horizontal = 14.dp, vertical = 5.dp)
-                ) {
-                    BasicText(
-                        "@$username",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        style = TextStyle(color = fg.copy(alpha = 0.75f), fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                    )
-                }
-            }
-        }
-
-        if (canEdit) {
-            Spacer(Modifier.height(14.dp))
-            Rise(delayMs = 230, animate = animate) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    GlassSurface(
-                        backdrop = bd,
-                        container = glass,
-                        modifier = Modifier.height(40.dp),
-                        onClick = onPick
-                    ) { ChipLabel(stringResource(R.string.channel_photo_change), R.drawable.ic_image) }
-                    if (canMove) {
-                        GlassSurface(
-                            backdrop = bd,
-                            container = glass,
-                            modifier = Modifier.height(40.dp),
-                            onClick = onMove
-                        ) { ChipLabel(stringResource(R.string.channel_photo_move), null) }
-                    }
-                }
-            }
-        }
-
-        // three numbers
-        Row(
-            Modifier.fillMaxWidth().padding(top = 18.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Rise(delayMs = 280, animate = animate, modifier = Modifier.weight(1f)) {
-                StatCard(bd, dark, fg, R.drawable.ic_people, EditOrange, memberCount, null, stringResource(R.string.channel_stat_members), 360)
-            }
-            Rise(delayMs = 350, animate = animate, modifier = Modifier.weight(1f)) {
-                StatCard(bd, dark, fg, R.drawable.ic_tab_account, EditMint, adminCount, null, stringResource(R.string.channel_stat_admins), 430)
-            }
-            Rise(delayMs = 420, animate = animate, modifier = Modifier.weight(1f)) {
-                StatCard(
-                    bd, dark, fg,
-                    if (isPublic) R.drawable.ic_globe else R.drawable.ic_lock,
-                    EditViolet, null,
-                    stringResource(if (isPublic) R.string.channel_stat_public else R.string.channel_stat_private),
-                    stringResource(R.string.channel_stat_type), 500
+            Spacer(Modifier.height(2.dp))
+            Rise(delayMs = 170, animate = animate) {
+                BasicText(
+                    "@$username",
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = TextStyle(color = fg.copy(alpha = 0.55f), fontSize = 14.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)
                 )
+            }
+        }
+        if (canEdit) {
+            Spacer(Modifier.height(8.dp))
+            Rise(delayMs = 210, animate = animate) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    TextAction(stringResource(R.string.channel_photo_change), R.drawable.ic_image, accent, onPick)
+                    if (canMove) TextAction(stringResource(R.string.channel_photo_move), null, accent, onMove)
+                }
             }
         }
     }
 }
 
-/** A small glass card: icon + a number that counts up (or a word), and a label under it. */
+/** A quiet text button (no box): small icon + a word in the accent colour. */
 @Composable
-private fun StatCard(
+private fun TextAction(text: String, icon: Int?, accent: Color, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(50))
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (icon != null) {
+            GlyphIcon(icon, accent, 17.dp)
+            Spacer(Modifier.width(6.dp))
+        }
+        BasicText(text, style = TextStyle(color = accent, fontSize = 14.sp, fontWeight = FontWeight.SemiBold))
+    }
+}
+
+/** The three numbers (members, supervisors, type) in ONE slim glass strip, with thin lines between them. */
+@Composable
+private fun StatsStrip(
     bd: Backdrop,
     dark: Boolean,
     fg: Color,
+    accent: Color,
+    memberCount: Int,
+    adminCount: Int,
+    isPublic: Boolean
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .liquidCard(bd, RoundedCornerShape(26.dp), dark)
+            .padding(vertical = 15.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        StatItem(Modifier.weight(1f), fg, accent, R.drawable.ic_people, memberCount, null, stringResource(R.string.channel_stat_members), 400)
+        Box(Modifier.width(0.7.dp).height(30.dp).background(fg.copy(alpha = 0.12f)))
+        StatItem(Modifier.weight(1f), fg, accent, R.drawable.ic_tab_account, adminCount, null, stringResource(R.string.channel_stat_admins), 470)
+        Box(Modifier.width(0.7.dp).height(30.dp).background(fg.copy(alpha = 0.12f)))
+        StatItem(
+            Modifier.weight(1f), fg, accent,
+            if (isPublic) R.drawable.ic_globe else R.drawable.ic_lock,
+            null,
+            stringResource(if (isPublic) R.string.channel_stat_public else R.string.channel_stat_private),
+            stringResource(R.string.channel_stat_type), 540
+        )
+    }
+}
+
+/** One number: small icon + the number that counts up (or a word), and the label under it. */
+@Composable
+private fun StatItem(
+    modifier: Modifier,
+    fg: Color,
+    accent: Color,
     icon: Int,
-    tint: Color,
     value: Int?,
     word: String?,
     label: String,
@@ -881,28 +930,22 @@ private fun StatCard(
 ) {
     var started by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
-        delay(countDelayMs.toLong())
+        delay(INTRO_BASE_MS + countDelayMs.toLong())
         started = true
     }
-    val shown by animateIntAsState(if (started) (value ?: 0) else 0, tween(900, easing = SETTLE), label = "stat")
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .liquidCard(bd, RoundedCornerShape(22.dp), dark)
-            .padding(vertical = 11.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
+    val shown by animateIntAsState(if (started) (value ?: 0) else 0, tween(800, easing = SETTLE), label = "stat")
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            GlyphIcon(icon, tint, 18.dp)
+            GlyphIcon(icon, accent, 17.dp)
             Spacer(Modifier.width(6.dp))
             BasicText(
                 word ?: shown.toString(),
                 maxLines = 1,
-                style = TextStyle(color = fg, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                style = TextStyle(color = fg, fontSize = 19.sp, fontWeight = FontWeight.Bold)
             )
         }
-        Spacer(Modifier.height(2.dp))
-        BasicText(label, maxLines = 1, style = TextStyle(color = fg.copy(alpha = 0.6f), fontSize = 11.sp))
+        Spacer(Modifier.height(3.dp))
+        BasicText(label, maxLines = 1, style = TextStyle(color = fg.copy(alpha = 0.55f), fontSize = 11.5.sp))
     }
 }
 
@@ -912,8 +955,8 @@ private fun SheetDivider(fg: Color) {
 }
 
 /**
- * One row of the info sheet: coloured round icon, small label, the text and the "3/24" counter. On focus the icon
- * grows and brightens, the label takes the colour, and a line draws itself under the row.
+ * One row of the info sheet: a soft round-square icon, a small label, the text and the "3/24" counter. On focus the icon
+ * grows and brightens, the label takes the accent colour, and a line draws itself under the row.
  */
 @Composable
 private fun SheetField(
@@ -935,7 +978,7 @@ private fun SheetField(
     var focused by remember { mutableStateOf(false) }
     val fr = remember { FocusRequester() }
     val glow by animateFloatAsState(if (focused) 1f else 0f, spring(0.8f, 400f), label = "rowGlow")
-    val labelColor by animateColorAsState(if (focused) tint else fg.copy(alpha = 0.6f), tween(200), label = "rowLabel")
+    val labelColor by animateColorAsState(if (focused) tint else fg.copy(alpha = 0.55f), tween(200), label = "rowLabel")
 
     Column(
         Modifier
@@ -948,23 +991,23 @@ private fun SheetField(
         ) {
             Box(
                 Modifier
-                    .size(40.dp)
+                    .size(38.dp)
                     .graphicsLayer {
-                        val k = 1f + 0.12f * glow
+                        val k = 1f + 0.10f * glow
                         scaleX = k
                         scaleY = k
                     }
-                    .clip(CircleShape)
-                    .background(tint.copy(alpha = 0.16f + 0.18f * glow)),
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(tint.copy(alpha = 0.14f + 0.16f * glow)),
                 contentAlignment = Alignment.Center
-            ) { GlyphIcon(icon, tint, 21.dp) }
-            Spacer(Modifier.width(12.dp))
+            ) { GlyphIcon(icon, tint, 20.dp) }
+            Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 BasicText(label, style = TextStyle(color = labelColor, fontSize = 12.sp, fontWeight = FontWeight.Medium))
                 Spacer(Modifier.height(3.dp))
                 Box(Modifier.fillMaxWidth()) {
                     if (value.isEmpty() && hint != null) {
-                        BasicText(hint, style = TextStyle(color = fg.copy(alpha = 0.3f), fontSize = 17.sp))
+                        BasicText(hint, style = TextStyle(color = fg.copy(alpha = 0.3f), fontSize = 16.sp))
                     }
                     BasicTextField(
                         value = value,
@@ -973,7 +1016,7 @@ private fun SheetField(
                         singleLine = singleLine,
                         minLines = minLines,
                         maxLines = if (singleLine) 1 else 4,
-                        textStyle = TextStyle(color = fg, fontSize = 17.sp),
+                        textStyle = TextStyle(color = fg, fontSize = 16.sp),
                         cursorBrush = SolidColor(tint),
                         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
                         modifier = Modifier
@@ -983,19 +1026,21 @@ private fun SheetField(
                     )
                 }
             }
-            Spacer(Modifier.width(8.dp))
-            BasicText(
-                "${value.length}/$maxLen",
-                style = TextStyle(
-                    color = if (countBad) EditRed else fg.copy(alpha = if (focused) 0.7f else 0.4f),
-                    fontSize = 11.sp
+            if (!readOnly) {
+                Spacer(Modifier.width(8.dp))
+                BasicText(
+                    "${value.length}/$maxLen",
+                    style = TextStyle(
+                        color = if (countBad) EditRed else fg.copy(alpha = if (focused) 0.7f else 0.38f),
+                        fontSize = 11.sp
+                    )
                 )
-            )
+            }
         }
         if (error != null) {
             BasicText(
                 error,
-                modifier = Modifier.padding(start = 70.dp, end = 16.dp, bottom = 8.dp),
+                modifier = Modifier.padding(start = 68.dp, end = 16.dp, bottom = 8.dp),
                 style = TextStyle(color = EditRed, fontSize = 12.sp)
             )
         }
@@ -1011,18 +1056,18 @@ private fun SheetField(
     }
 }
 
-@Composable
-private fun ChipLabel(text: String, icon: Int?) {
-    Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-        if (icon != null) {
-            GlyphIcon(icon, Color.White, 18.dp)
-            Spacer(Modifier.width(6.dp))
-        }
-        BasicText(text, style = TextStyle(color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold))
-    }
+/** The corners of a row inside a grouped list: only the first row is round on top, only the last one at the bottom. */
+private fun groupShape(first: Boolean, last: Boolean): RoundedCornerShape {
+    val top = if (first) 26.dp else 0.dp
+    val bottom = if (last) 26.dp else 0.dp
+    return RoundedCornerShape(topStart = top, topEnd = top, bottomStart = bottom, bottomEnd = bottom)
 }
 
-/** One member: photo (tap = his profile), name, @username, and the round button at the far end (empty for now). */
+/**
+ * One member: photo (tap = his profile), name + a small badge, @username, and a round options button at the far end.
+ * The rows of the list sit on ONE soft sheet (first row round on top, last one round at the bottom) with a thin line
+ * between two rows.
+ */
 @Composable
 private fun MemberRow(
     modifier: Modifier,
@@ -1037,8 +1082,9 @@ private fun MemberRow(
     onMenu: () -> Unit,
     myName: String,
     myPhoto: Bitmap?,
-    bd: Backdrop,
-    dark: Boolean,
+    first: Boolean,
+    last: Boolean,
+    fill: Color,
     fg: Color,
     onOpenProfile: (ProfileTarget) -> Unit
 ) {
@@ -1054,71 +1100,80 @@ private fun MemberRow(
     var bounds by remember { mutableStateOf(Rect.Zero) }
 
     Rise(enterDelay, animate, modifier) {
-    Column(Modifier.fillMaxWidth()) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 6.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        // the photo: a tap opens the profile of this member (it grows out of the photo)
-        Box(
+        Column(
             Modifier
-                .size(MEMBER_PHOTO)
-                .onGloballyPositioned { bounds = it.boundsInRoot() }
-                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
-                    onOpenProfile(ProfileTarget(uid, name, photo, bounds))
+                .fillMaxWidth()
+                .clip(groupShape(first, last))
+                .background(fill)
+        ) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 11.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // the photo: a tap opens the profile of this member (it grows out of the photo)
+                Box(
+                    Modifier
+                        .size(MEMBER_PHOTO)
+                        .onGloballyPositioned { bounds = it.boundsInRoot() }
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                            onOpenProfile(ProfileTarget(uid, name, photo, bounds))
+                        }
+                ) { Avatar(photo, name, MEMBER_PHOTO) }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        BasicText(
+                            name.ifBlank { "…" },
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                            style = TextStyle(color = fg, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        )
+                        // one small badge: owner, supervisor, or "you"
+                        // (for a supervisor: the name the owner chose, or the default word)
+                        val ownerWord = stringResource(R.string.channel_owner_badge)
+                        val adminWord = stringResource(R.string.channel_admin_badge)
+                        val youWord = stringResource(R.string.channel_you_badge)
+                        val badge: Pair<String, Color>? = when {
+                            isOwnerRow -> ownerWord to EditOrange
+                            isAdmin -> (if (adminTitle.isBlank()) adminWord else adminTitle) to EditMint
+                            isMe -> youWord to EditViolet
+                            else -> null
+                        }
+                        if (badge != null) {
+                            Spacer(Modifier.width(8.dp))
+                            Badge(badge.first, badge.second)
+                        }
+                    }
+                    if (username.isNotEmpty()) {
+                        BasicText(
+                            "@$username",
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            style = TextStyle(color = fg.copy(alpha = 0.55f), fontSize = 13.sp)
+                        )
+                    }
                 }
-        ) { Avatar(photo, name, MEMBER_PHOTO) }
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                BasicText(
-                    name.ifBlank { "…" },
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
-                    style = TextStyle(color = fg, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                )
-                // one small badge: owner, supervisor, or "you"
-                // (for a supervisor: the name the owner chose, or the default word)
-                val ownerWord = stringResource(R.string.channel_owner_badge)
-                val adminWord = stringResource(R.string.channel_admin_badge)
-                val youWord = stringResource(R.string.channel_you_badge)
-                val badge: Pair<String, Color>? = when {
-                    isOwnerRow -> ownerWord to EditOrange
-                    isAdmin -> (if (adminTitle.isBlank()) adminWord else adminTitle) to EditMint
-                    isMe -> youWord to EditViolet
-                    else -> null
-                }
-                if (badge != null) {
+                if (showMenu) {
                     Spacer(Modifier.width(8.dp))
-                    Badge(badge.first, badge.second)
+                    // the options of this member (supervisor + permissions / kick / ban)
+                    Box(
+                        Modifier
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .background(fg.copy(alpha = 0.08f))
+                            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onMenu),
+                        contentAlignment = Alignment.Center
+                    ) { GlyphIcon(R.drawable.ic_settings, fg.copy(alpha = 0.8f), 19.dp) }
                 }
             }
-            if (username.isNotEmpty()) {
-                BasicText(
-                    "@$username",
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = TextStyle(color = fg.copy(alpha = 0.6f), fontSize = 13.sp)
-                )
+            // thin line between two rows (it starts after the photo)
+            if (!last) {
+                Box(Modifier.fillMaxWidth().padding(start = 72.dp).height(0.7.dp).background(fg.copy(alpha = 0.10f)))
             }
         }
-        if (showMenu) {
-            Spacer(Modifier.width(8.dp))
-            // the options of this member (supervisor + permissions / kick / ban)
-            GlassSurface(
-                backdrop = bd,
-                container = if (dark) Color(0xFF121212).copy(alpha = 0.40f) else Color.White.copy(alpha = 0.50f),
-                modifier = Modifier.size(40.dp),
-                onClick = onMenu
-            ) { GlyphIcon(R.drawable.ic_settings, fg, 20.dp) }
-        }
-    }
-    // hairline between two rows (it starts after the photo)
-    Box(Modifier.fillMaxWidth().padding(start = 64.dp).height(0.7.dp).background(fg.copy(alpha = 0.10f)))
-    }
     }
 }
 
@@ -1355,13 +1410,17 @@ private fun AdminTitleField(current: String, bd: Backdrop, fg: Color, onSave: (S
     }
 }
 
-/** One banned person: photo (tap = his profile), name, @username and the button that lifts the ban. */
+/**
+ * One banned person: photo (tap = his profile), name, @username and a small button that lifts the ban.
+ * The rows sit on ONE soft red sheet (same shape rule as the members).
+ */
 @Composable
 private fun BannedRow(
     modifier: Modifier,
     uid: String,
     onUnban: () -> Unit,
-    bd: Backdrop,
+    first: Boolean,
+    last: Boolean,
     dark: Boolean,
     fg: Color,
     onOpenProfile: (ProfileTarget) -> Unit
@@ -1385,51 +1444,66 @@ private fun BannedRow(
         }
     }
 
-    Row(
+    Column(
         modifier
             .fillMaxWidth()
-            .padding(bottom = 8.dp)
-            .liquidCard(bd, RoundedCornerShape(26.dp), dark, borderColor = EditRed.copy(alpha = 0.35f))
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .clip(groupShape(first, last))
+            .background(EditRed.copy(alpha = if (dark) 0.12f else 0.10f))
     ) {
-        Box(
+        Row(
             Modifier
-                .size(MEMBER_PHOTO)
-                .onGloballyPositioned { bounds = it.boundsInRoot() }
-                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
-                    onOpenProfile(ProfileTarget(uid, name, photo, bounds))
-                }
-        ) { Avatar(photo, name, MEMBER_PHOTO) }
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            BasicText(
-                name.ifBlank { "…" },
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                style = TextStyle(color = fg, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-            )
-            if (username.isNotEmpty()) {
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                Modifier
+                    .size(MEMBER_PHOTO)
+                    .onGloballyPositioned { bounds = it.boundsInRoot() }
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                        onOpenProfile(ProfileTarget(uid, name, photo, bounds))
+                    }
+            ) { Avatar(photo, name, MEMBER_PHOTO) }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
                 BasicText(
-                    "@$username",
+                    name.ifBlank { "…" },
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    style = TextStyle(color = fg.copy(alpha = 0.6f), fontSize = 13.sp)
+                    style = TextStyle(color = fg, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                )
+                if (username.isNotEmpty()) {
+                    BasicText(
+                        "@$username",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = TextStyle(color = fg.copy(alpha = 0.55f), fontSize = 13.sp)
+                    )
+                }
+            }
+            Spacer(Modifier.width(8.dp))
+            Box(
+                Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(fg.copy(alpha = if (busy) 0.05f else 0.11f))
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                        if (!busy) {
+                            busy = true
+                            onUnban()
+                        }
+                    }
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                BasicText(
+                    stringResource(R.string.channel_unban),
+                    style = TextStyle(color = fg.copy(alpha = if (busy) 0.5f else 1f), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 )
             }
         }
-        Spacer(Modifier.width(8.dp))
-        GlassSurface(
-            backdrop = bd,
-            container = Color(0xFF121212).copy(alpha = if (busy) 0.25f else 0.40f),
-            modifier = Modifier.height(40.dp),
-            onClick = {
-                if (!busy) {
-                    busy = true
-                    onUnban()
-                }
-            }
-        ) { ChipLabel(stringResource(R.string.channel_unban), null) }
+        if (!last) {
+            Box(Modifier.fillMaxWidth().padding(start = 72.dp).height(0.7.dp).background(EditRed.copy(alpha = 0.18f)))
+        }
     }
 }
 
