@@ -504,8 +504,25 @@ class ChannelsState(private val uid: String) {
      * reached. Any signed-in account may read a channel (firestore.rules), a member or not.
      */
     suspend fun fetchChannel(id: String): Channel? {
-        val d = FirebaseFirestore.getInstance().collection("channels").document(id).get().await()
-        return if (d.exists()) toChannel(d) else null
+        val ref = FirebaseFirestore.getInstance().collection("channels").document(id)
+        var last: Throwable? = null
+        // a link can be opened right when the app starts, before the connection to Firestore is up: try up to 3 times
+        for (attempt in 1..3) {
+            try {
+                val d = ref.get().await()
+                return if (d.exists()) toChannel(d) else null
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                last = e
+                // a refusal by the rules will not fix itself
+                if (e is com.google.firebase.firestore.FirebaseFirestoreException &&
+                    e.code == com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED
+                ) throw e
+                if (attempt < 3) kotlinx.coroutines.delay(1500)
+            }
+        }
+        throw last ?: IllegalStateException("fetchChannel failed")
     }
 
     /** Decline: the invite is marked declined (it disappears from Home). */

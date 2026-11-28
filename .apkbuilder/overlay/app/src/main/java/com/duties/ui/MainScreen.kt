@@ -163,19 +163,49 @@ fun MainScreen(dark: Boolean, introDelayMs: Int = 200) {
     // a channel LINK was opened (DeepLink.kt): already inside -> its chat opens; public -> "join this channel?"; else a note
     val linkId = DeepLink.pendingChannelId
     var linkRequest by remember { mutableStateOf<LinkRequest?>(null) }
-    val linkFailText = stringResource(R.string.link_failed)
     LaunchedEffect(linkId) {
         val id = linkId ?: return@LaunchedEffect
-        DeepLink.pendingChannelId = null
-        val found = runCatching { channels.fetchChannel(id) }
-        val ch = found.getOrNull()
-        when {
-            found.isFailure -> Toast.makeText(context, linkFailText, Toast.LENGTH_LONG).show()
-            ch == null -> linkRequest = LinkRequest(null, LINK_MISSING)
-            (user?.uid ?: "") in ch.members || ch.ownerUid == user?.uid -> Push.openChannelId = ch.id    // opens its chat
-            ch.bannedMe -> linkRequest = LinkRequest(ch, LINK_BANNED)
-            !ch.isPublic -> linkRequest = LinkRequest(ch, LINK_PRIVATE)
-            else -> linkRequest = LinkRequest(ch, LINK_JOIN)
+        try {
+            // NOTE: pendingChannelId is cleared only at the very END. Clearing it first changes this effect's own key,
+            // which cancels the effect while the channel is still being read (the read then "failed" every time).
+            val startedAt = System.currentTimeMillis()
+            val result: Result<com.duties.ui.Channel?> = try {
+                Result.success(channels.fetchChannel(id))
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                Result.failure(e)
+            }
+            val failure = result.exceptionOrNull()
+            val ch = result.getOrNull()
+            when {
+                failure != null -> {
+                    // not opened: a .txt file with the reason and the place goes to the Download folder
+                    val took = System.currentTimeMillis() - startedAt
+                    val savedAs = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        com.duties.ErrorReport.save(
+                            context,
+                            what = "The channel link could not be opened (the channel could not be read).",
+                            error = failure,
+                            place = "MainScreen.kt  ->  LaunchedEffect(linkId)  ->  ChannelsState.fetchChannel(id)\n" +
+                                "Channels.kt  ->  fetchChannel(): Firestore  channels/<id>  .get()  (3 tries)",
+                            details = "Link channel id: $id\n" +
+                                "Signed in: " + (FirebaseAuth.getInstance().currentUser != null) + "\n" +
+                                "Time spent trying: $took ms"
+                        )
+                    }
+                    val msg = if (savedAs != null) context.getString(R.string.link_failed_saved, savedAs)
+                    else context.getString(R.string.link_failed)
+                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                }
+                ch == null -> linkRequest = LinkRequest(null, LINK_MISSING)
+                (user?.uid ?: "") in ch.members || ch.ownerUid == user?.uid -> Push.openChannelId = ch.id    // opens its chat
+                ch.bannedMe -> linkRequest = LinkRequest(ch, LINK_BANNED)
+                !ch.isPublic -> linkRequest = LinkRequest(ch, LINK_PRIVATE)
+                else -> linkRequest = LinkRequest(ch, LINK_JOIN)
+            }
+        } finally {
+            if (DeepLink.pendingChannelId == id) DeepLink.pendingChannelId = null
         }
     }
     // the owner keeps the chat rooms (Realtime Database) in step with the channels (new members, old channels)

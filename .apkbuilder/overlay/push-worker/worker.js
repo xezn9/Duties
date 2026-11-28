@@ -1,1 +1,337 @@
-const L=40,V=12e4,j=/^[A-Za-z0-9_-]{1,128}$/;class r extends Error{constructor(t,n){super(n),this.status=t}}var X={async fetch(e,t,n){const s=new URL(e.url);if(e.method==="GET"||e.method==="HEAD"){if(s.pathname==="/.well-known/assetlinks.json")return F();const o=s.pathname.match(/^\/c\/([A-Za-z0-9_-]{1,128})\/?$/);if(o)return H(o[1],s)}if(e.method!=="POST"||s.pathname!=="/notify")return new Response("Duties push Worker is running",{status:200});try{const o=await J(e,t,n);return m(o,200)}catch(o){return o instanceof r?m({error:o.message},o.status):(console.log("worker error",o&&o.stack?o.stack:String(o)),m({error:"internal"},500))}}};async function J(e,t,n){if(!t.FIREBASE_PROJECT_ID||!t.DB_URL||!t.SERVICE_ACCOUNT)throw new r(500,"worker is not configured");const s=e.headers.get("Authorization")||"",o=s.startsWith("Bearer ")?s.slice(7):"",c=await G(o,t.FIREBASE_PROJECT_ID);let d;try{d=await e.json()}catch{throw new r(400,"bad json")}const h=String(d.channelId||""),i=String(d.messageId||""),p=String(d.channelName||"").slice(0,60);if(!j.test(h)||!j.test(i))throw new r(400,"bad ids");const N=JSON.parse(t.SERVICE_ACCOUNT),k=await M(N),A=t.DB_URL.replace(/\/+$/,""),y=async a=>{const l=await fetch(`${A}/${a}.json?access_token=${k}`);if(!l.ok)throw new r(502,"database "+l.status);return l.json()},f=await y(`chats/${h}/messages/${i}`);if(!f||f.uid!==c)throw new r(403,"not your message");const E=Number(f.createdAt)||0;if(Date.now()-E>12e4)throw new r(409,"message too old");const S=await y(`chats/${h}/members`)||{};if(!S[c])throw new r(403,"not a member");const x=Object.keys(S).filter(a=>S[a]===!0&&a!==c);if(x.length===0)return{sent:0};const O=await y("fcmTokens")||{},C=[];for(const a of x){const l=O[a];if(l)for(const w of Object.keys(l))C.push({uid:a,token:w})}const T=C.slice(0,40),P={type:"chat",channelId:h,channelName:p,messageId:i,senderUid:c,senderName:String(f.name||"").slice(0,40),text:String(f.text||"").slice(0,300),ts:String(E||Date.now())},v=`https://fcm.googleapis.com/v1/projects/${t.FIREBASE_PROJECT_ID}/messages:send`,D=await Promise.all(T.map(async({uid:a,token:l})=>{try{const w=await fetch(v,{method:"POST",headers:{Authorization:`Bearer ${k}`,"Content-Type":"application/json"},body:JSON.stringify({message:{token:l,data:P,android:{priority:"HIGH",ttl:"3600s"}}})});if(w.ok)return{ok:!0};const U=await w.text();return{ok:!1,dead:w.status===404||/UNREGISTERED|NOT_FOUND|INVALID_ARGUMENT/.test(U),uid:a,token:l}}catch{return{ok:!1,dead:!1}}})),R=D.filter(a=>a.dead);return R.length&&n.waitUntil(Promise.all(R.slice(0,8).map(a=>fetch(`${A}/fcmTokens/${a.uid}/${encodeURIComponent(a.token)}.json?access_token=${k}`,{method:"DELETE"}).catch(()=>{})))),{sent:D.filter(a=>a.ok).length,devices:T.length}}let g={keys:null,exp:0};async function B(){if(g.keys&&Date.now()<g.exp)return g.keys;const e=await fetch("https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com");if(!e.ok)throw new r(502,"could not load Google keys");const t=await e.json();return g={keys:t.keys,exp:Date.now()+3600*1e3},t.keys}async function G(e,t){const n=e.split(".");if(n.length!==3)throw new r(401,"bad token");let s,o;try{s=JSON.parse(new TextDecoder().decode(b(n[0]))),o=JSON.parse(new TextDecoder().decode(b(n[1])))}catch{throw new r(401,"bad token")}if(s.alg!=="RS256"||!s.kid)throw new r(401,"bad token");const c=(await B()).find(p=>p.kid===s.kid);if(!c)throw new r(401,"unknown key");const d=await crypto.subtle.importKey("jwk",c,{name:"RSASSA-PKCS1-v1_5",hash:"SHA-256"},!1,["verify"]);if(!await crypto.subtle.verify("RSASSA-PKCS1-v1_5",d,b(n[2]),new TextEncoder().encode(n[0]+"."+n[1])))throw new r(401,"bad signature");const i=Date.now()/1e3;if(o.aud!==t||o.iss!=="https://securetoken.google.com/"+t||!o.sub||o.exp<i||o.iat>i+60)throw new r(401,"token not valid for this project");return o.sub}let u={token:null,exp:0};async function M(e){if(u.token&&Date.now()<u.exp-6e4)return u.token;const t=Math.floor(Date.now()/1e3),n=new TextEncoder,s=_(n.encode(JSON.stringify({alg:"RS256",typ:"JWT"})))+"."+_(n.encode(JSON.stringify({iss:e.client_email,scope:"https://www.googleapis.com/auth/firebase.messaging https://www.googleapis.com/auth/firebase.database https://www.googleapis.com/auth/userinfo.email",aud:"https://oauth2.googleapis.com/token",iat:t,exp:t+3600}))),o=e.private_key.replace(/-----[A-Z ]+-----/g,"").replace(/\s+/g,""),c=await crypto.subtle.importKey("pkcs8",$(o),{name:"RSASSA-PKCS1-v1_5",hash:"SHA-256"},!1,["sign"]),d=await crypto.subtle.sign("RSASSA-PKCS1-v1_5",c,n.encode(s)),h=s+"."+_(new Uint8Array(d)),i=await fetch("https://oauth2.googleapis.com/token",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:new URLSearchParams({grant_type:"urn:ietf:params:oauth:grant-type:jwt-bearer",assertion:h})});if(!i.ok)throw new r(502,"google token "+i.status);const p=await i.json();return u={token:p.access_token,exp:Date.now()+(p.expires_in||3600)*1e3},u.token}const I="com.duties",z=["11:5C:9C:90:98:EC:9B:65:89:51:23:65:EA:15:2F:92:0C:4D:55:41:AA:4E:86:3C:06:D5:F2:C4:4E:36:68:FD"];function F(){return m([{relation:["delegate_permission/common.handle_all_urls"],target:{namespace:"android_app",package_name:I,sha256_cert_fingerprints:z}}],200)}function H(e,t){const n=`intent://${t.host}/c/${e}#Intent;scheme=https;package=${I};end`,s=`<!doctype html>\n<html lang="ar" dir="rtl"><head><meta charset="utf-8">\n<meta name="viewport" content="width=device-width,initial-scale=1">\n<title>Duties</title>\n<style>\n  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#000;color:#fff;\n       font-family:system-ui,-apple-system,"Segoe UI",Tahoma,sans-serif;text-align:center}\n  .card{max-width:340px;margin:24px;padding:32px 24px;border-radius:28px;background:#1a1a1a}\n  h1{font-size:22px;margin:0 0 10px}\n  p{margin:0 0 22px;color:#b0b3b8;line-height:1.7;font-size:15px}\n  a.btn{display:block;padding:14px 18px;border-radius:26px;background:#ff8a1f;color:#fff;text-decoration:none;font-weight:700;font-size:17px}\n</style></head><body><div class="card">\n<h1>\u062F\u0639\u0648\u0629 \u0644\u0644\u0627\u0646\u0636\u0645\u0627\u0645 \u0625\u0644\u0649 \u0642\u0646\u0627\u0629</h1>\n<p>\u0627\u0641\u062A\u062D \u0627\u0644\u0631\u0627\u0628\u0637 \u0645\u0646 \u062A\u0637\u0628\u064A\u0642 Duties \u062D\u062A\u0649 \u062A\u0646\u0636\u0645 \u0644\u0644\u0642\u0646\u0627\u0629. \u0625\u0630\u0627 \u0645\u0627 \u0627\u0646\u0641\u062A\u062D \u0627\u0644\u062A\u0637\u0628\u064A\u0642 \u0648\u064A\u0627\u0643\u060C \u0627\u0636\u063A\u0637 \u0627\u0644\u0632\u0631.</p>\n<a class="btn" href="${n}">\u0641\u062A\u062D \u0641\u064A \u0627\u0644\u062A\u0637\u0628\u064A\u0642</a>\n</div>\n<script>\n  if (/android/i.test(navigator.userAgent)) setTimeout(function(){ location.href = ${JSON.stringify(n)}; }, 400);\n<\/script></body></html>`;return new Response(s,{status:200,headers:{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-store"}})}function m(e,t){return new Response(JSON.stringify(e),{status:t,headers:{"Content-Type":"application/json"}})}function $(e){const t=atob(e),n=new Uint8Array(t.length);for(let s=0;s<t.length;s++)n[s]=t.charCodeAt(s);return n}function b(e){for(e=e.replace(/-/g,"+").replace(/_/g,"/");e.length%4;)e+="=";return $(e)}function _(e){let t="";for(let n=0;n<e.length;n++)t+=String.fromCharCode(e[n]);return btoa(t).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"")}export{X as default};
+/**
+ * Duties push Worker (Cloudflare Workers, free plan, no credit card).
+ *
+ * The app calls  POST /notify  after a message reached the Realtime Database:
+ *   header  Authorization: Bearer <Firebase ID token of the sender>
+ *   body    { "channelId": "...", "messageId": "...", "channelName": "..." }
+ *
+ * The Worker:
+ *   1. checks the Firebase login token (really signed by Google, for this project)
+ *   2. reads the message from the database and checks it is the sender's own and is fresh (never trusts text from the app)
+ *   3. reads the members of the chat and their FCM tokens
+ *   4. sends one FCM (HTTP v1) data message to each phone (not to the sender)
+ *   5. removes the tokens that Google says are dead
+ *
+ * Settings (Worker > Settings > Variables and Secrets):
+ *   FIREBASE_PROJECT_ID  (text)    e.g. duties-a11bf
+ *   DB_URL               (text)    e.g. https://duties-a11bf-default-rtdb.firebaseio.com
+ *   SERVICE_ACCOUNT      (SECRET)  the whole JSON file of the Firebase service account
+ */
+
+const MAX_DEVICES = 40;          // free plan: max 50 outgoing requests per call
+const MAX_MESSAGE_AGE_MS = 120000; // a message older than this can not be pushed (stops replays)
+const ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
+
+class HttpError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+
+export default {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    // channel links:  GET /c/<channelId>  and the file Android checks so these links open the app (App Links)
+    if (request.method === "GET" || request.method === "HEAD") {
+      if (url.pathname === "/.well-known/assetlinks.json") return assetLinks();
+      const m = url.pathname.match(/^\/c\/([A-Za-z0-9_-]{1,128})\/?$/);
+      if (m) return channelPage(m[1], url);
+    }
+    if (request.method !== "POST" || url.pathname !== "/notify") {
+      return new Response("Duties push Worker is running", { status: 200 });
+    }
+    try {
+      const result = await handleNotify(request, env, ctx);
+      return json(result, 200);
+    } catch (e) {
+      if (e instanceof HttpError) return json({ error: e.message }, e.status);
+      console.log("worker error", e && e.stack ? e.stack : String(e));
+      return json({ error: "internal" }, 500);
+    }
+  },
+};
+
+async function handleNotify(request, env, ctx) {
+  if (!env.FIREBASE_PROJECT_ID || !env.DB_URL || !env.SERVICE_ACCOUNT) {
+    throw new HttpError(500, "worker is not configured");
+  }
+
+  // 1) who is calling
+  const auth = request.headers.get("Authorization") || "";
+  const idToken = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  const senderUid = await verifyIdToken(idToken, env.FIREBASE_PROJECT_ID);
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    throw new HttpError(400, "bad json");
+  }
+  const channelId = String(body.channelId || "");
+  const messageId = String(body.messageId || "");
+  const channelName = String(body.channelName || "").slice(0, 60);
+  if (!ID_RE.test(channelId) || !ID_RE.test(messageId)) throw new HttpError(400, "bad ids");
+
+  const sa = JSON.parse(env.SERVICE_ACCOUNT);
+  const accessToken = await getAccessToken(sa);
+  const db = env.DB_URL.replace(/\/+$/, "");
+  const dbGet = async (path) => {
+    const r = await fetch(`${db}/${path}.json?access_token=${accessToken}`);
+    if (!r.ok) throw new HttpError(502, "database " + r.status);
+    return r.json();
+  };
+
+  // 2) the message must exist, be the caller's own, and be fresh
+  const msg = await dbGet(`chats/${channelId}/messages/${messageId}`);
+  if (!msg || msg.uid !== senderUid) throw new HttpError(403, "not your message");
+  const createdAt = Number(msg.createdAt) || 0;
+  if (Date.now() - createdAt > MAX_MESSAGE_AGE_MS) throw new HttpError(409, "message too old");
+
+  // 3) members (without the sender) and their phones
+  const members = (await dbGet(`chats/${channelId}/members`)) || {};
+  if (!members[senderUid]) throw new HttpError(403, "not a member");
+  const targets = Object.keys(members).filter((u) => members[u] === true && u !== senderUid);
+  if (targets.length === 0) return { sent: 0 };
+
+  const allTokens = (await dbGet("fcmTokens")) || {};
+  const devices = [];
+  for (const uid of targets) {
+    const tokens = allTokens[uid];
+    if (!tokens) continue;
+    for (const token of Object.keys(tokens)) devices.push({ uid, token });
+  }
+  const list = devices.slice(0, MAX_DEVICES);
+
+  // 4) send
+  const data = {
+    type: "chat",
+    channelId,
+    channelName,
+    messageId,
+    senderUid,
+    senderName: String(msg.name || "").slice(0, 40),
+    text: String(msg.text || "").slice(0, 300),
+    ts: String(createdAt || Date.now()),
+  };
+  const sendUrl = `https://fcm.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/messages:send`;
+  const results = await Promise.all(
+    list.map(async ({ uid, token }) => {
+      try {
+        const r = await fetch(sendUrl, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            message: {
+              token,
+              data,
+              android: { priority: "HIGH", ttl: "3600s" },
+            },
+          }),
+        });
+        if (r.ok) return { ok: true };
+        const err = await r.text();
+        const dead = r.status === 404 || /UNREGISTERED|NOT_FOUND|INVALID_ARGUMENT/.test(err);
+        return { ok: false, dead, uid, token };
+      } catch {
+        return { ok: false, dead: false };
+      }
+    })
+  );
+
+  // 5) clean the dead tokens
+  const dead = results.filter((x) => x.dead);
+  if (dead.length) {
+    ctx.waitUntil(
+      Promise.all(
+        dead.slice(0, 8).map((d) =>
+          fetch(`${db}/fcmTokens/${d.uid}/${encodeURIComponent(d.token)}.json?access_token=${accessToken}`, {
+            method: "DELETE",
+          }).catch(() => {})
+        )
+      )
+    );
+  }
+  return { sent: results.filter((x) => x.ok).length, devices: list.length };
+}
+
+/* ------------------------------------------------------------------ Firebase login token check */
+
+let jwksCache = { keys: null, exp: 0 };
+
+async function getJwks() {
+  if (jwksCache.keys && Date.now() < jwksCache.exp) return jwksCache.keys;
+  const r = await fetch("https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com");
+  if (!r.ok) throw new HttpError(502, "could not load Google keys");
+  const j = await r.json();
+  jwksCache = { keys: j.keys, exp: Date.now() + 60 * 60 * 1000 };
+  return j.keys;
+}
+
+async function verifyIdToken(token, projectId) {
+  const parts = token.split(".");
+  if (parts.length !== 3) throw new HttpError(401, "bad token");
+  let header, payload;
+  try {
+    header = JSON.parse(new TextDecoder().decode(b64urlToBytes(parts[0])));
+    payload = JSON.parse(new TextDecoder().decode(b64urlToBytes(parts[1])));
+  } catch {
+    throw new HttpError(401, "bad token");
+  }
+  if (header.alg !== "RS256" || !header.kid) throw new HttpError(401, "bad token");
+
+  const jwk = (await getJwks()).find((k) => k.kid === header.kid);
+  if (!jwk) throw new HttpError(401, "unknown key");
+  const key = await crypto.subtle.importKey(
+    "jwk",
+    jwk,
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false,
+    ["verify"]
+  );
+  const valid = await crypto.subtle.verify(
+    "RSASSA-PKCS1-v1_5",
+    key,
+    b64urlToBytes(parts[2]),
+    new TextEncoder().encode(parts[0] + "." + parts[1])
+  );
+  if (!valid) throw new HttpError(401, "bad signature");
+
+  const now = Date.now() / 1000;
+  if (
+    payload.aud !== projectId ||
+    payload.iss !== "https://securetoken.google.com/" + projectId ||
+    !payload.sub ||
+    payload.exp < now ||
+    payload.iat > now + 60
+  ) {
+    throw new HttpError(401, "token not valid for this project");
+  }
+  return payload.sub;
+}
+
+/* ------------------------------------------------------------------ Google access token (service account) */
+
+let tokenCache = { token: null, exp: 0 };
+
+async function getAccessToken(sa) {
+  if (tokenCache.token && Date.now() < tokenCache.exp - 60000) return tokenCache.token;
+  const now = Math.floor(Date.now() / 1000);
+  const enc = new TextEncoder();
+  const unsigned =
+    bytesToB64url(enc.encode(JSON.stringify({ alg: "RS256", typ: "JWT" }))) +
+    "." +
+    bytesToB64url(
+      enc.encode(
+        JSON.stringify({
+          iss: sa.client_email,
+          scope:
+            "https://www.googleapis.com/auth/firebase.messaging https://www.googleapis.com/auth/firebase.database https://www.googleapis.com/auth/userinfo.email",
+          aud: "https://oauth2.googleapis.com/token",
+          iat: now,
+          exp: now + 3600,
+        })
+      )
+    );
+  const pem = sa.private_key.replace(/-----[A-Z ]+-----/g, "").replace(/\s+/g, "");
+  const key = await crypto.subtle.importKey(
+    "pkcs8",
+    b64ToBytes(pem),
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const sig = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, enc.encode(unsigned));
+  const assertion = unsigned + "." + bytesToB64url(new Uint8Array(sig));
+
+  const r = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion,
+    }),
+  });
+  if (!r.ok) throw new HttpError(502, "google token " + r.status);
+  const j = await r.json();
+  tokenCache = { token: j.access_token, exp: Date.now() + (j.expires_in || 3600) * 1000 };
+  return tokenCache.token;
+}
+
+/* ------------------------------------------------------------------ helpers */
+
+// ---------------------------------------------------------------------------------------------------------------
+// Channel links
+//   https://<this worker>/c/<channelId>
+// With the app installed and "Open supported links" on, Android opens the app straight away (the app joins the channel).
+// Otherwise this page is shown, with a button that opens the app.
+// ---------------------------------------------------------------------------------------------------------------
+const APP_PACKAGE = "com.duties";
+// SHA-256 fingerprint of the key the app is signed with (keystore/duties.jks). Several can be listed.
+const APP_CERT_SHA256 = ["11:5C:9C:90:98:EC:9B:65:89:51:23:65:EA:15:2F:92:0C:4D:55:41:AA:4E:86:3C:06:D5:F2:C4:4E:36:68:FD"];
+
+function assetLinks() {
+  return json(
+    [
+      {
+        relation: ["delegate_permission/common.handle_all_urls"],
+        target: { namespace: "android_app", package_name: APP_PACKAGE, sha256_cert_fingerprints: APP_CERT_SHA256 },
+      },
+    ],
+    200
+  );
+}
+
+function channelPage(channelId, url) {
+  // channelId is only [A-Za-z0-9_-] (checked by the route), so it is safe inside the page
+  const intentUrl = `intent://${url.host}/c/${channelId}#Intent;scheme=https;package=${APP_PACKAGE};end`;
+  const html = `<!doctype html>
+<html lang="ar" dir="rtl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Duties</title>
+<style>
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#000;color:#fff;
+       font-family:system-ui,-apple-system,"Segoe UI",Tahoma,sans-serif;text-align:center}
+  .card{max-width:340px;margin:24px;padding:32px 24px;border-radius:28px;background:#1a1a1a}
+  h1{font-size:22px;margin:0 0 10px}
+  p{margin:0 0 22px;color:#b0b3b8;line-height:1.7;font-size:15px}
+  a.btn{display:block;padding:14px 18px;border-radius:26px;background:#ff8a1f;color:#fff;text-decoration:none;font-weight:700;font-size:17px}
+</style></head><body><div class="card">
+<h1>دعوة للانضمام إلى قناة</h1>
+<p>افتح الرابط من تطبيق Duties حتى تنضم للقناة. إذا ما انفتح التطبيق وياك، اضغط الزر.</p>
+<a class="btn" href="${intentUrl}">فتح في التطبيق</a>
+</div>
+<script>
+  if (/android/i.test(navigator.userAgent)) setTimeout(function(){ location.href = ${JSON.stringify(intentUrl)}; }, 400);
+</script></body></html>`;
+  return new Response(html, { status: 200, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+}
+
+function json(obj, status) {
+  return new Response(JSON.stringify(obj), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function b64ToBytes(b64) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function b64urlToBytes(s) {
+  s = s.replace(/-/g, "+").replace(/_/g, "/");
+  while (s.length % 4) s += "=";
+  return b64ToBytes(s);
+}
+
+function bytesToB64url(bytes) {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}

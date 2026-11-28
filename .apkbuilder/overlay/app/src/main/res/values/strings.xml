@@ -278,5 +278,6 @@
     <string name="link_missing_title">القناة مو موجودة</string>
     <string name="link_missing_msg">هذا الرابط ما يرجع لأي قناة، يمكن القناة انحذفت.</string>
     <string name="link_failed">ما گدرت أفتح الرابط، تأكد من الإنترنت وجرب مرة ثانية</string>
+    <string name="link_failed_saved">ما گدرت أفتح الرابط. السبب انحفظ بملف %1$s داخل مجلد Download</string>
     <string name="link_ok">تمام</string>
 </resources>
