@@ -129,8 +129,13 @@ internal class SearchMorph(
      * button is not a wide pill like the one of the original (the bell button is a 48dp circle). false = the old
      * mapping that stretches the pill rect of the original onto the button (used by the search button of Home).
      */
-    val faithful: Boolean = false
+    val faithful: Boolean = false,
+    /** How much slower than the video THIS morph plays (1 = like the video). The sticky notifications card uses > 1 so the neck can be seen. */
+    val slowdown: Float = 1f
 ) {
+    private val timeScale = object : MotionDurationScale {
+        override val scaleFactor: Float = slowdown * MORPH_SLOWDOWN
+    }
     var phase by mutableStateOf(Phase.Closed)
     val clock = Animatable(0f)
     var buttonBounds by mutableStateOf(Rect.Zero)
@@ -169,16 +174,12 @@ internal class SearchMorph(
         val go = suspend { clock.animateTo(total, tween((total * 1000).toInt(), easing = LinearEasing)) }
         // AnimationSpeed (the app speeds every animation up 2x) must not touch this clock: the measured timeline
         // of the original plays in its real time, slowed down by MORPH_SLOWDOWN. (phone animations off = 0 = skip)
-        if (AnimationSpeed.scaleFactor == 0f) go() else withContext(MorphTime) { go() }
+        if (AnimationSpeed.scaleFactor == 0f) go() else withContext(timeScale) { go() }
     }
 }
 
 /** How much slower than the original video the morph plays (1 = exactly like the video). */
 private const val MORPH_SLOWDOWN = 1f
-
-private object MorphTime : MotionDurationScale {
-    override val scaleFactor: Float = MORPH_SLOWDOWN
-}
 
 // clock values at which the real button is invisible: opening: faded out at 0.135, back (as the X) from 0.27;
 // closing: faded out at 0.04, re-born as the bud at 0.11
@@ -186,9 +187,9 @@ private const val BTN_HIDDEN_FROM = 0.09f
 private const val BTN_GONE_AT = 0.05f
 
 // reference size of the pill of the animation (1080 px wide screen)
-private const val REF_PILL_W = 301f
-private const val REF_PILL_H = 132f
-private const val REF_PILL_CY = 222f
+internal const val REF_PILL_W = 301f
+internal const val REF_PILL_H = 132f
+internal const val REF_PILL_CY = 222f
 
 /**
  * What the animation does to the button (the "pill" of the original): [scaleX, scaleY, translationX, translationY, alpha].
@@ -204,7 +205,7 @@ private const val REF_BUD_W = 70f
  * [g] = 1: the stretched mapping (the wide pill of the original lies exactly on the button, same as before).
  * [g] = 0: ONE uniform scale for both axes (sqrt of the two), so a round drop / bud of the original stays round.
  */
-private fun shapeScale(btnW: Float, btnH: Float, g: Float): Pair<Float, Float> {
+internal fun shapeScale(btnW: Float, btnH: Float, g: Float): Pair<Float, Float> {
     val sx = btnW / REF_PILL_W
     val sy = btnH / REF_PILL_H
     val su = kotlin.math.sqrt(sx * sy)
@@ -261,7 +262,7 @@ private fun buttonMorph(
 }
 
 /** Pill rect of the animation (reference px) -> rect on this screen, relative to the button. */
-private fun mapPill(p: FloatArray, rest: Rect): Rect = Rect(
+internal fun mapPill(p: FloatArray, rest: Rect): Rect = Rect(
     rest.left + (p[0] - 216f) / REF_PILL_W * rest.width,
     rest.top + (p[1] - 156f) / REF_PILL_H * rest.height,
     rest.left + (p[2] - 216f) / REF_PILL_W * rest.width,
@@ -269,7 +270,7 @@ private fun mapPill(p: FloatArray, rest: Rect): Rect = Rect(
 )
 
 /** Same as [mapPill] but a round bud stays round (see [shapeScale]); the rect is placed around the button's centre. */
-private fun mapPillFaithful(p: FloatArray, rest: Rect): Rect {
+internal fun mapPillFaithful(p: FloatArray, rest: Rect): Rect {
     val (gx, gy) = shapeScale(rest.width, rest.height, pillness(p))
     val w = (p[2] - p[0]) * gx
     val h = (p[3] - p[1]) * gy
@@ -438,11 +439,17 @@ internal fun MorphPanel(
     modifier: Modifier = Modifier,
     mirrored: Boolean = false,
     inPlace: Boolean = false,
+    /**
+     * Not null = the card is STICKY LIQUID GLASS (see StickyMorphGlass.kt) that refracts this backdrop (the whole page),
+     * instead of the solid grey card melted by the goo filter. Needs Android 13+ (AGSL); older phones keep the solid card.
+     */
+    glass: Backdrop? = null,
     onDismiss: () -> Unit = {},
     content: @Composable () -> Unit
 ) {
     LaunchedEffect(visible) { morph.run(visible) }
     if (morph.phase == Phase.Closed) return
+    val useGlass = glass != null && Build.VERSION.SDK_INT >= 33
     var origin by remember { mutableStateOf<Offset?>(null) }
     var layerSize by remember { mutableStateOf(IntSize.Zero) }
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
@@ -462,11 +469,19 @@ internal fun MorphPanel(
                 val w = layerSize.width.toFloat()
                 var rest = Rect(btn.left - o.x, btn.top - o.y, btn.right - o.x, btn.bottom - o.y)
                 if (mirrored) rest = Rect(w - rest.right, rest.top, w - rest.left, rest.bottom)
+                // the glass is drawn OUTSIDE the mirrored box below (a mirror would flip the page it refracts);
+                // it flips its own shapes instead
+                if (useGlass && glass != null) {
+                    StickyMorphGlass(
+                        morph = morph, backdrop = glass, rest = rest, layerW = w, u = w / REF_W_PX,
+                        dark = dark, mirrored = mirrored, inPlace = inPlace
+                    )
+                }
                 Box(Modifier.fillMaxSize().graphicsLayer { if (mirrored) scaleX = -1f }) {
                     SearchMorphLayer(
                         morph = morph, rest = rest, u = w / REF_W_PX, dark = dark,
                         screenBottom = layerSize.height.toFloat(),
-                        icon = icon, mirrored = mirrored, inPlace = inPlace
+                        icon = icon, mirrored = mirrored, inPlace = inPlace, glass = useGlass
                     ) {
                         Box(Modifier.fillMaxSize().graphicsLayer { if (mirrored) scaleX = -1f }) { content() }
                     }
@@ -503,7 +518,7 @@ private const val OPEN_NECK_END = 0.26f
 private const val OPEN_NECK_REACH = 520f
 
 /** Gap between the title row (the button's rest place) and the top of the card. */
-private val CARD_GAP = 10.dp
+internal val CARD_GAP = 10.dp
 
 @Composable
 private fun SearchContent(
@@ -644,6 +659,8 @@ private fun SearchMorphLayer(
     icon: Int = R.drawable.ic_search,
     mirrored: Boolean = false,
     inPlace: Boolean = false,
+    /** true = the card is drawn by StickyMorphGlass: this layer only places the content (no solid body, no rim). */
+    glass: Boolean = false,
     content: @Composable (bottomInsetPx: Float) -> Unit
 ) {
     val density = LocalDensity.current
@@ -699,7 +716,7 @@ private fun SearchMorphLayer(
     val gooOpen = remember(u) { if (Build.VERSION.SDK_INT >= 31) gooEffect(OPEN_NECK_BLUR * u) else null }
     val openNeck = OPEN_NECK && phase == Phase.Opening && t >= 0.084f && t <= OPEN_NECK_END
     val gooNow = if (openNeck) gooOpen else goo
-    Canvas(
+    if (!glass) Canvas(
         Modifier.fillMaxSize().graphicsLayer {
             compositingStrategy = CompositingStrategy.Offscreen
             if (f.goo || openNeck) renderEffect = gooNow
@@ -789,7 +806,7 @@ private fun SearchMorphLayer(
     }
 
     // 3) glass rim (thin light edge) - same gradient as the original
-    if (f.rim > 0.01f) {
+    if (!glass && f.rim > 0.01f) {
         val rimColor = if (dark) Color.White else Color.Black
         Canvas(Modifier.fillMaxSize()) {
             drawRoundRect(
