@@ -1057,8 +1057,24 @@ private fun InlineField(
                 )
             }
             if (pencil && !readOnly && !focused) {
-                Spacer(Modifier.width(8.dp))
-                GlyphIcon(R.drawable.ic_edit, fg.copy(alpha = 0.35f), 15.dp)
+                Spacer(Modifier.width(10.dp))
+                // the pencil is a round button in the accent colour: a tap starts typing the name
+                val penSource = remember { MutableInteractionSource() }
+                val penPressed by penSource.collectIsPressedAsState()
+                val penScale by animateFloatAsState(if (penPressed) 0.85f else 1f, spring(dampingRatio = 0.5f, stiffness = 500f), label = "penPress")
+                Box(
+                    Modifier
+                        .size(34.dp)
+                        .graphicsLayer {
+                            scaleX = penScale
+                            scaleY = penScale
+                        }
+                        .clip(CircleShape)
+                        .background(accent.copy(alpha = 0.20f))
+                        .border(1.dp, accent.copy(alpha = 0.45f), CircleShape)
+                        .clickable(interactionSource = penSource, indication = null) { fr.requestFocus() },
+                    contentAlignment = Alignment.Center
+                ) { GlyphIcon(R.drawable.ic_edit, accent, 17.dp) }
             }
         }
         if (!readOnly) {

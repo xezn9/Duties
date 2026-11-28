@@ -257,7 +257,8 @@ internal fun ChatMorph(
                             if (editPush.request == null && profile == null) {
                                 focus.clearFocus()
                                 keyboard?.hide()
-                                editPush.open("edit", r.takeIf { it.width > 1f && it.height > 1f })
+                                // circular reveal: a circle is born on the name bar and grows until it covers the screen
+                                editPush.open("edit", r.takeIf { it.width > 1f && it.height > 1f }, circular = true)
                             }
                         }
                     )
