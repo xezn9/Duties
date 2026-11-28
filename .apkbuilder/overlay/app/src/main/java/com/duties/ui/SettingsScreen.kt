@@ -55,11 +55,6 @@ private val ThemeTintLight = Color(0xFF0A84FF)
 private val NotifTintDark = Color(0xFFFFB340)
 private val NotifTintLight = Color(0xFFFF9500)
 
-/**
- * How much slower than the reference video the notifications card plays. The video drops the drop off the button in
- * 2 frames, too fast to see the sticky neck of the glass; 1.5 lets you see it stretch and snap. 1 = exactly like the video.
- */
-private const val NOTIF_SLOWDOWN = 1.5f
 
 /**
  * Settings page. It is opened with PushStack from the menu button of the Account tab, so it grows out of
@@ -109,7 +104,7 @@ private fun SettingsMain(dark: Boolean, onClose: () -> Unit, onTheme: (Rect?) ->
     // the notifications card (liquid morph of the bell button); back closes it
     var notifOpen by remember { mutableStateOf(false) }
     // faithful = the drop / bud keep the exact proportions of the reference video (the bell is a circle, not a pill)
-    val notifMorph = remember { SearchMorph(faithful = true, slowdown = NOTIF_SLOWDOWN) }
+    val notifMorph = remember { SearchMorph(faithful = true, slowdown = STICKY_MORPH_SLOWDOWN) }
     // the three on/off states are read here, while the page opens, NOT when the card is composed: those system calls
     // would otherwise land in the first (heaviest) frame of the morph and make it skip its first frames
     val notifAccess = rememberNotifAccess()

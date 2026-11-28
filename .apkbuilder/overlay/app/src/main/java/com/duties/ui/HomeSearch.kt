@@ -181,6 +181,13 @@ internal class SearchMorph(
 /** How much slower than the original video the morph plays (1 = exactly like the video). */
 private const val MORPH_SLOWDOWN = 1f
 
+/**
+ * Speed of the morphs that are sticky liquid glass (notifications card, search card) relative to the reference video.
+ * The video drops the drop off the button in 2 frames, too fast to see the sticky neck; 1.5 lets you see it stretch and
+ * snap. 1 = exactly like the video.
+ */
+internal const val STICKY_MORPH_SLOWDOWN = 1.5f
+
 // clock values at which the real button is invisible: opening: faded out at 0.135, back (as the X) from 0.27;
 // closing: faded out at 0.04, re-born as the bud at 0.11
 private const val BTN_HIDDEN_FROM = 0.09f
@@ -599,9 +606,18 @@ private fun SearchContent(
             if (o != null && layerSize.width > 0 && btn.width > 0f) {
                 val rest = Rect(btn.left - o.x, btn.top - o.y, btn.right - o.x, btn.bottom - o.y)
                 val u = layerSize.width / REF_W_PX
+                // sticky liquid glass card (Android 13+, AGSL); older phones keep the solid card
+                val useGlass = Build.VERSION.SDK_INT >= 33
+                if (useGlass) {
+                    StickyMorphGlass(
+                        morph = morph, backdrop = backdrop, rest = rest, layerW = layerSize.width.toFloat(), u = u,
+                        dark = dark, mirrored = false, inPlace = false
+                    )
+                }
                 SearchMorphLayer(
                     morph = morph, rest = rest, u = u, dark = dark,
                     screenBottom = layerSize.height - imeBottom,
+                    glass = useGlass
                 ) { bottomInset ->
                     val list = results
                     val message: Int? = when {

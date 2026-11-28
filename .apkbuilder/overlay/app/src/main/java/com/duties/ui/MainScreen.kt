@@ -336,7 +336,7 @@ private fun TabPage(
     // Home: the channel search is open (it covers the channel list; back closes it)
     var searching by remember { mutableStateOf(false) }
     // clock of the liquid morph (search button -> search field), shared by the button and the search layer
-    val searchMorph = remember { SearchMorph() }
+    val searchMorph = remember { SearchMorph(slowdown = STICKY_MORPH_SLOWDOWN) }
     BackHandler(enabled = searching) { searching = false }
     // The title is drawn ABOVE the search layer (the card of the morph stays under "Home"), so it is composed after the
     // layer. It takes its place in the cascade first, and the page leaves room for it with a spacer of its height.

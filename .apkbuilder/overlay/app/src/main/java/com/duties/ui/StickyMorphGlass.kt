@@ -3,7 +3,7 @@ package com.duties.ui
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.absoluteOffset
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
@@ -46,7 +46,10 @@ internal const val STICKY_REACH_REF = 90f
 /** Clock value at which the blob that stays at the button (while opening) is fully drained into the card. */
 private const val BLOB_GONE_AT = 0.30f
 
-/** The grey of the card (31 on black = the old solid card) as a see-through tint, and its light-theme twin. */
+/**
+ * The grey of the card (31 on black = the old solid card) as a see-through tint, and its light-theme twin.
+ * All the values of this glass (blur, lens, rainbow, tint) are FIXED: the sticky cards do NOT follow GlassTheme.
+ */
 private val GlassCardDark = Color(0xFF262626).copy(alpha = 0.82f)
 private val GlassCardLight = Color(0xFFF2F2F7).copy(alpha = 0.82f)
 
@@ -150,7 +153,7 @@ internal fun StickyMorphGlass(
     val place = if (tight != null) {
         Modifier
             .absoluteOffset { IntOffset(ox.roundToInt(), oy.roundToInt()) }
-            .size(with(density) { tight.width.toDp() }, with(density) { tight.height.toDp() })
+            .requiredSize(with(density) { tight.width.toDp() }, with(density) { tight.height.toDp() })
     } else Modifier.fillMaxSize()
 
     Box(
@@ -169,14 +172,14 @@ internal fun StickyMorphGlass(
                     StickyRoundRect(r.center.x - ox, r.center.y - oy, hw, hh, min(it.radius, min(hw, hh)))
                 }
                 vibrancy()
-                blur(12f.dp.toPx() * GlassTheme.blurScale)
+                blur(12f.dp.toPx())
                 stickyLens(
                     shapes = shapes,
                     smoothness = STICKY_REACH_REF * u,
-                    refractionHeight = 14f.dp.toPx() * GlassTheme.lensScale,
-                    refractionAmount = 28f.dp.toPx() * GlassTheme.lensScale,
-                    chromaticAberration = 0.15f * GlassTheme.dispersionScale,
-                    tint = GlassTheme.fill(if (dark) GlassCardDark else GlassCardLight),
+                    refractionHeight = 14f.dp.toPx(),
+                    refractionAmount = 28f.dp.toPx(),
+                    chromaticAberration = 0.15f,
+                    tint = if (dark) GlassCardDark else GlassCardLight,
                     rimWidth = 1.5f.dp.toPx(),
                     rimAlpha = if (dark) 0.45f else 0.30f,
                     lightAngle = 45f
