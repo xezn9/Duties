@@ -267,12 +267,12 @@
     <string name="channel_link_copy">نسخ</string>
     <string name="channel_link_copied">تم النسخ</string>
     <string name="channel_link_public_hint">أي واحد يفتح الرابط يگدر ينضم للقناة</string>
-    <string name="channel_link_private_hint">القناة خاصة: الرابط ما يضيف أحد، الانضمام بالدعوة فقط</string>
+    <string name="channel_link_private_hint">القناة خاصة: اللي يفتح الرابط يرسل طلب انضمام، وانت توافق أو ترفض من داخل القناة</string>
     <string name="link_join_title">الانضمام للقناة</string>
     <string name="link_join_msg">تريد تنضم لقناة «%1$s»؟</string>
     <string name="link_join_yes">انضمام</string>
     <string name="link_private_title">قناة خاصة</string>
-    <string name="link_private_msg">قناة «%1$s» خاصة، الانضمام إلها بالدعوة فقط.</string>
+    <string name="link_private_msg">قناة «%1$s» خاصة. تگدر ترسل طلب انضمام لمالك القناة، وإذا وافق تنضم.</string>
     <string name="link_banned_title">ما تگدر تنضم</string>
     <string name="link_banned_msg">انت محظور من قناة «%1$s».</string>
     <string name="link_missing_title">القناة مو موجودة</string>
@@ -280,4 +280,15 @@
     <string name="link_failed">ما گدرت أفتح الرابط، تأكد من الإنترنت وجرب مرة ثانية</string>
     <string name="link_failed_saved">ما گدرت أفتح الرابط. السبب انحفظ بملف %1$s داخل مجلد Download</string>
     <string name="link_ok">تمام</string>
+    <string name="link_request_yes">إرسال الطلب</string>
+    <string name="search_request">طلب</string>
+    <string name="join_req_title">طلب انضمام</string>
+    <string name="join_req_body">يريد ينضم لهذي القناة.</string>
+    <string name="join_req_accept">قبول</string>
+    <string name="join_req_reject">رفض</string>
+    <string name="join_req_wait_owner">القرار لمالك القناة</string>
+    <string name="join_req_sent">انرسل طلبك لمالك القناة، لما يوافق تنضم</string>
+    <string name="join_req_already">طلبك مرسل من قبل، بانتظار موافقة المالك</string>
+    <string name="join_req_failed">ما گدرت أرسل الطلب، تأكد من الإنترنت وجرب مرة ثانية</string>
+    <string name="join_req_action_failed">ما تم الإجراء، تأكد من الإنترنت وجرب مرة ثانية</string>
 </resources>

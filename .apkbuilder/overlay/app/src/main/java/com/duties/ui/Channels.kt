@@ -500,6 +500,15 @@ class ChannelsState(private val uid: String) {
     }
 
     /**
+     * A PRIVATE channel: I ask its owner to let me in. The request shows as a card inside the channel's chat, for the owner and
+     * the supervisors only (JoinRequests.kt). Throws [BannedException] when I am banned from the channel.
+     */
+    suspend fun requestJoin(channel: Channel, name: String, username: String): JoinRequestResult {
+        if (channel.bannedMe) throw BannedException()
+        return JoinRequests.send(channel.id, uid, name, username)
+    }
+
+    /**
      * One channel by its id (a channel link was opened). null = there is no such channel. Throws when the server can not be
      * reached. Any signed-in account may read a channel (firestore.rules), a member or not.
      */

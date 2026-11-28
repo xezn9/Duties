@@ -23,6 +23,8 @@ import kotlinx.coroutines.withTimeoutOrNull
  *   chats/{channelId}/adminPerms/{uid}    = { ban, kick, edit }  (what each supervisor may do, set by the owner)
  *   chats/{channelId}/banned/{uid}        = true   (banned: nobody can add him to "members" until the ban is lifted)
  *   chats/{channelId}/messages/{pushId}   = { uid, name, text, createdAt }
+ *   chats/{channelId}/requests/{uid}      = { name, username, createdAt }  (a request to join a PRIVATE channel, see JoinRequests.kt:
+ *                                           only the owner and the supervisors can read it, only the owner accepts / rejects it)
  *
  * Firestore is not touched by the chat. The channel list itself still comes from Firestore (Channels.kt) and only
  * tells this file which room to open and who is inside.

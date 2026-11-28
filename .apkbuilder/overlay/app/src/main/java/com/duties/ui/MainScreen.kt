@@ -341,9 +341,14 @@ fun MainScreen(dark: Boolean, introDelayMs: Int = 200) {
                 onJoin = { ch ->
                     linkRequest = null
                     scope.launch {
-                        runCatching { channels.join(ch) }
-                            .onSuccess { Push.openChannelId = ch.id }       // the chat opens as soon as the channel is in my list
-                            .onFailure { Toast.makeText(context, channelFailText, Toast.LENGTH_LONG).show() }
+                        if (!ch.isPublic) {
+                            // a private channel: a request goes to the owner (a card inside the channel's chat)
+                            requestToJoinWithToast(context, channels, ch, profile.name, profile.username)
+                        } else {
+                            runCatching { channels.join(ch) }
+                                .onSuccess { Push.openChannelId = ch.id }       // the chat opens as soon as the channel is in my list
+                                .onFailure { Toast.makeText(context, channelFailText, Toast.LENGTH_LONG).show() }
+                        }
                     }
                 }
             )
@@ -468,7 +473,12 @@ private fun TabPage(
                 onSearch = { q -> channels.searchChannels(q) },
                 myChannelIds = channels.channels.map { it.id }.toSet(),
                 onDismiss = { searching = false },
-                onJoin = { ch ->
+                onJoin = onJoin@{ ch ->
+                    if (!ch.isPublic) {
+                        // a private channel: ask the owner (a card appears in the channel's chat); not joined yet
+                        requestToJoinWithToast(context, channels, ch, profile.name, profile.username)
+                        return@onJoin false
+                    }
                     val ok = runCatching { channels.join(ch) }
                         .onFailure {
                             if (it is BannedException) Toast.makeText(context, bannedError, Toast.LENGTH_LONG).show()

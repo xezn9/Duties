@@ -7,7 +7,8 @@ rules_version = '2';
 //                      isPublic (true = public, false = private) is chosen when the channel is created; channels made
 //                      before this field existed have none and count as public.
 //                      Anybody signed in can add himself to "members" of a PUBLIC channel (Join button);
-//                      a private channel is by invitation only
+//                      a private channel is by invitation, or by a join REQUEST that the owner accepts (the request itself lives in the
+//                      Realtime Database: chats/{id}/requests/{uid}; the owner adds the person to "members" when he accepts)
 // channelUsernames/{name} : makes every channel @username unique
 // channels.admins     : list of uids (supervisors), written only by the owner. Only the owner and the supervisors can
 //                      write messages (enforced in the Realtime Database).

@@ -72,11 +72,18 @@ internal fun ChannelLinkDialog(
             dark = dark,
             title = title,
             message = message,
-            confirmText = stringResource(if (kind == LINK_JOIN) R.string.link_join_yes else R.string.link_ok),
+            confirmText = stringResource(
+                when (kind) {
+                    LINK_JOIN -> R.string.link_join_yes
+                    LINK_PRIVATE -> R.string.link_request_yes      // a private channel: ask the owner to let me in
+                    else -> R.string.link_ok
+                }
+            ),
             dismissText = stringResource(R.string.home_confirm_cancel),
             onConfirm = {
                 val ch = r?.channel
-                if (kind == LINK_JOIN && ch != null) onJoin(ch) else onDismiss()
+                // LINK_PRIVATE: onJoin sends a request to the owner (MainScreen), it does not join
+                if ((kind == LINK_JOIN || kind == LINK_PRIVATE) && ch != null) onJoin(ch) else onDismiss()
             }
         )
     }

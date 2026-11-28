@@ -984,7 +984,8 @@ private fun SearchResultRow(
                 softWrap = false,
                 style = TextStyle(color = Color(0xFFE5484D), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
             )
-        } else if (ch.isPublic) {
+        } else {
+            // public: Join. private: "Request" (a request goes to the owner, see JoinRequests.kt)
             Spacer(Modifier.width(8.dp))
             LiquidButton(
                 onClick = { if (!joining) onJoin() },
@@ -993,7 +994,7 @@ private fun SearchResultRow(
                 modifier = Modifier.width(72.dp).height(32.dp)
             ) {
                 BasicText(
-                    if (joining) "…" else stringResource(R.string.search_join),
+                    if (joining) "…" else stringResource(if (ch.isPublic) R.string.search_join else R.string.search_request),
                     maxLines = 1,
                     softWrap = false,
                     style = TextStyle(color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
