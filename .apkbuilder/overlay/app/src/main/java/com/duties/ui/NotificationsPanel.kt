@@ -132,21 +132,41 @@ private fun OnResume(onResume: () -> Unit) {
 private val GreenDark = Color(0xFF30D158)
 private val GreenLight = Color(0xFF34C759)
 
-/** What is inside the card: a title (the X of the button sits at its end) and the three buttons. */
-@Composable
-internal fun NotificationsCard(dark: Boolean, onClose: () -> Unit) {
-    val context = LocalContext.current
-    val textColor = if (dark) Color.White else Color(0xFF101114)
-    val subColor = if (dark) Color(0xFFB0B3B8) else Color(0xFF55586A)
+/** The three on / off states. Read when the owner is created and again every time the user comes back to the app. */
+internal class NotifAccessState(private val context: Context) {
+    var notif by mutableStateOf(NotifAccess.notificationsOn(context))
+        private set
+    var battery by mutableStateOf(NotifAccess.batteryUnrestricted(context))
+        private set
+    var links by mutableStateOf(NotifAccess.linksOn(context))
+        private set
 
-    var notif by remember { mutableStateOf(NotifAccess.notificationsOn(context)) }
-    var battery by remember { mutableStateOf(NotifAccess.batteryUnrestricted(context)) }
-    var links by remember { mutableStateOf(NotifAccess.linksOn(context)) }
-    OnResume {
+    fun refresh() {
         notif = NotifAccess.notificationsOn(context)
         battery = NotifAccess.batteryUnrestricted(context)
         links = NotifAccess.linksOn(context)
     }
+}
+
+/** Create it OUTSIDE the card (e.g. in the settings page), so reading the system state never costs a frame of the morph. */
+@Composable
+internal fun rememberNotifAccess(): NotifAccessState {
+    val context = LocalContext.current
+    val state = remember(context) { NotifAccessState(context) }
+    OnResume { state.refresh() }
+    return state
+}
+
+/** What is inside the card: a title (the X of the button sits at its end) and the three buttons. */
+@Composable
+internal fun NotificationsCard(dark: Boolean, access: NotifAccessState, onClose: () -> Unit) {
+    val context = LocalContext.current
+    val textColor = if (dark) Color.White else Color(0xFF101114)
+    val subColor = if (dark) Color(0xFFB0B3B8) else Color(0xFF55586A)
+
+    val notif = access.notif
+    val battery = access.battery
+    val links = access.links
 
     Column(Modifier.fillMaxSize()) {
         // top row: [title] ... [X]. The card grows exactly where the bell button was (the button turned into the

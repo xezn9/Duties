@@ -44,6 +44,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.MotionDurationScale
 import androidx.compose.ui.Modifier
@@ -122,7 +123,14 @@ import kotlin.math.sin
 
 /** Shared state of the morph: the animation clock + where the button and the field area are (root coordinates). */
 @Stable
-internal class SearchMorph {
+internal class SearchMorph(
+    /**
+     * true = the shapes of the reference video keep their proportions (round drop, round bud, same neck) even when the
+     * button is not a wide pill like the one of the original (the bell button is a 48dp circle). false = the old
+     * mapping that stretches the pill rect of the original onto the button (used by the search button of Home).
+     */
+    val faithful: Boolean = false
+) {
     var phase by mutableStateOf(Phase.Closed)
     val clock = Animatable(0f)
     var buttonBounds by mutableStateOf(Rect.Zero)
@@ -133,15 +141,28 @@ internal class SearchMorph {
             if (phase == Phase.Open) return
             clock.snapTo(0f)                      // reset first, then switch the phase (no stale frame)
             phase = Phase.Opening
+            settleFirstFrame()
             playClock(OPEN_T)
             phase = Phase.Open
         } else {
             if (phase == Phase.Closed) return
             clock.snapTo(0f)
             phase = Phase.Closing
+            settleFirstFrame()
             playClock(CLOSE_T)
             phase = Phase.Closed
         }
+    }
+
+    /**
+     * The first frame of a phase is the heavy one (the card, its layers and the blur are created). If the clock were
+     * already running, that slow frame would eat the first ~40-80 ms of the measured timeline (the press and the drop
+     * would be skipped, as in the screen recording). So the clock waits at t = 0 until that frame has been drawn.
+     */
+    private suspend fun settleFirstFrame() {
+        if (!faithful) return
+        withFrameNanos { }
+        withFrameNanos { }
     }
 
     private suspend fun playClock(total: Float) {
@@ -175,6 +196,24 @@ private const val REF_PILL_CY = 222f
  * comes back (as the X) when the drop has left. Closing: the drop melts back; the button is born again as a small bud
  * (same bud rect / alpha as the original), grows into the pill, overshoots and settles.
  */
+/** Width of the round bud the pill is born as when the card melts back (reference px, see CLOSE_PILL). */
+private const val REF_BUD_W = 70f
+
+/**
+ * Screen px per reference px (x, y) of a shape of the animation that is mapped onto a button of [btnW] x [btnH] px.
+ * [g] = 1: the stretched mapping (the wide pill of the original lies exactly on the button, same as before).
+ * [g] = 0: ONE uniform scale for both axes (sqrt of the two), so a round drop / bud of the original stays round.
+ */
+private fun shapeScale(btnW: Float, btnH: Float, g: Float): Pair<Float, Float> {
+    val sx = btnW / REF_PILL_W
+    val sy = btnH / REF_PILL_H
+    val su = kotlin.math.sqrt(sx * sy)
+    return Pair(su + (sx - su) * g, su + (sy - su) * g)
+}
+
+/** How much a pill rect of the closing animation is "the pill" (1) and not still the round bud (0): by its width. */
+private fun pillness(p: FloatArray): Float = ((p[2] - p[0] - REF_BUD_W) / (REF_PILL_W - REF_BUD_W)).coerceIn(0f, 1f)
+
 private fun buttonMorph(
     morph: SearchMorph, btnWPx: Float, btnHPx: Float, dropPx: Float, mirror: Float = 1f, inPlace: Boolean = false
 ): FloatArray {
@@ -205,6 +244,15 @@ private fun buttonMorph(
     if (p == null) {                                          // closing, before the bud: gone
         return floatArrayOf(1f, 1f, 0f, dropPx, if (inPlace) 0f else 1f - smooth01(t / 0.04f))
     }
+    if (morph.faithful) {
+        // the bud is round like in the video and only becomes the (button-shaped) pill as it grows
+        val (gx, gy) = shapeScale(btnWPx, btnHPx, pillness(p))
+        return floatArrayOf(
+            (p[2] - p[0]) * gx / btnWPx, (p[3] - p[1]) * gy / btnHPx,
+            ((p[0] + p[2]) / 2f - 366.5f) * gx * mirror, ((p[1] + p[3]) / 2f - REF_PILL_CY) * gy,
+            f.pillAlpha
+        )
+    }
     return floatArrayOf(
         (p[2] - p[0]) / REF_PILL_W, (p[3] - p[1]) / REF_PILL_H,
         ((p[0] + p[2]) / 2f - 366.5f) * kx * mirror, ((p[1] + p[3]) / 2f - REF_PILL_CY) * ky,
@@ -219,6 +267,16 @@ private fun mapPill(p: FloatArray, rest: Rect): Rect = Rect(
     rest.left + (p[2] - 216f) / REF_PILL_W * rest.width,
     rest.top + (p[3] - 156f) / REF_PILL_H * rest.height
 )
+
+/** Same as [mapPill] but a round bud stays round (see [shapeScale]); the rect is placed around the button's centre. */
+private fun mapPillFaithful(p: FloatArray, rest: Rect): Rect {
+    val (gx, gy) = shapeScale(rest.width, rest.height, pillness(p))
+    val w = (p[2] - p[0]) * gx
+    val h = (p[3] - p[1]) * gy
+    val cx = rest.center.x + ((p[0] + p[2]) / 2f - 366.5f) * gx
+    val cy = rest.center.y + ((p[1] + p[3]) / 2f - REF_PILL_CY) * gy
+    return Rect(cx - w / 2f, cy - h / 2f, cx + w / 2f, cy + h / 2f)
+}
 
 /**
  * Round liquid glass button (same glass as the other buttons of the app).
@@ -305,8 +363,15 @@ internal fun HomeSearchButton(
             modifier = Modifier.size(48.dp),
             horizontalPadding = 0.dp
         ) {
-            // both icons sit on the same spot
-            Box(Modifier.requiredSize(22.dp)) {
+            // both icons sit on the same spot. faithful: the icon fades like the dots / share icons of the pill in the
+            // video (they fade out while the pill is pressed, and fade back in 0.15 -> 0.27 after the bud is born)
+            Box(
+                Modifier.requiredSize(22.dp).graphicsLayer {
+                    if (morph.faithful && (morph.phase == Phase.Opening || morph.phase == Phase.Closing)) {
+                        alpha = frameFor(morph.phase, morph.clock.value).pillContent.coerceIn(0f, 1f)
+                    }
+                }
+            ) {
                 GlyphIcon(
                     icon, menuInk(dark), 22.dp,
                     Modifier.graphicsLayer {
@@ -589,12 +654,19 @@ private fun SearchMorphLayer(
 
     // reference px -> screen px.  At the start / end of the morph (k = 0) the reference pill is laid on the button;
     // when the card is fully open (k = 1) it is at 1 : 1 scale, right edge on the button's right edge, under the button.
-    val s0x = rest.width / (REF_PILL_W * u)
-    val s0y = rest.height / (REF_PILL_H * u)
     val inset = with(density) { CARD_INSET.toPx() }      // the button (now the X) sits this far inside the card's corner
     val gap = with(density) { CARD_GAP.toPx() }
-    val ax0 = rest.center.x - 366.5f * u * s0x
-    val ay0 = rest.center.y - REF_PILL_CY * u * s0y
+    // screen px per reference px of the shapes at the button (k = 0). Stretched onto the button (the old mapping, g = 1)
+    // or - faithful - uniform (g = 0) once the pressed pill has become the drop, so the drop is as round as in the video.
+    val faithful = morph.faithful
+    val gBody = when {
+        !faithful -> 1f
+        phase == Phase.Opening -> 1f - smooth01((t - 0.084f) / (0.118f - 0.084f))
+        else -> 0f
+    }
+    val (bsx, bsy) = shapeScale(rest.width, rest.height, gBody)
+    val ax0 = rest.center.x - 366.5f * bsx
+    val ay0 = rest.center.y - REF_PILL_CY * bsy
     // inPlace (the original): the settled card has its top and its outer edge ON the button (the button turned into the
     // card). Otherwise the card hangs below the button and the button comes back as the X inside it.
     val axF = if (inPlace) rest.right - FINAL_BODY[2] * u else rest.right + inset - FINAL_BODY[2] * u
@@ -602,8 +674,8 @@ private fun SearchMorphLayer(
     val k = ((b[3] - 288f) / (1449f - 288f)).coerceIn(0f, 1f)      // how far the card has grown out of the pill
     val ax = ax0 + (axF - ax0) * k
     val ay = ay0 + (ayF - ay0) * k
-    val sx = u * (s0x + (1f - s0x) * k)
-    val sy = u * (s0y + (1f - s0y) * k)
+    val sx = bsx + (u - bsx) * k
+    val sy = bsy + (u - bsy) * k
     val body = Rect(ax + b[0] * sx, ay + b[1] * sy, ax + b[2] * sx, ay + b[3] * sy)
     val bodyR = min(f.bodyR * u, min(body.width, body.height) / 2f)
 
@@ -621,7 +693,9 @@ private fun SearchMorphLayer(
 
     // 1) pill + card, merged by the gooey filter (metaball): while closing (as in the original) and, new, while the drop
     //    leaves the button: a rest blob of the button stays behind and fades, so a sticky neck stretches and snaps.
-    val goo = remember(u) { if (Build.VERSION.SDK_INT >= 31) gooEffect(CLOSE_GOO_BLUR * u) else null }
+    // faithful: the shapes of the merge (drop, bud) are smaller than on the 1080 px reference, so the blur follows them
+    val gooScale = if (faithful) shapeScale(rest.width, rest.height, 0f).first else u
+    val goo = remember(gooScale) { if (Build.VERSION.SDK_INT >= 31) gooEffect(CLOSE_GOO_BLUR * gooScale) else null }
     val gooOpen = remember(u) { if (Build.VERSION.SDK_INT >= 31) gooEffect(OPEN_NECK_BLUR * u) else null }
     val openNeck = OPEN_NECK && phase == Phase.Opening && t >= 0.084f && t <= OPEN_NECK_END
     val gooNow = if (openNeck) gooOpen else goo
@@ -658,7 +732,7 @@ private fun SearchMorphLayer(
         }
         if (phase == Phase.Closing && f.goo) {
             f.pill?.let { p ->
-                val r = mapPill(p, rest)
+                val r = if (faithful) mapPillFaithful(p, rest) else mapPill(p, rest)
                 drawRoundRect(buttonBase.copy(alpha = f.pillAlpha), r.topLeft, r.size, CornerRadius(min(r.width, r.height) / 2f))
             }
         }

@@ -102,7 +102,11 @@ private fun SettingsMain(dark: Boolean, onClose: () -> Unit, onTheme: (Rect?) ->
     var signingOut by remember { mutableStateOf(false) }
     // the notifications card (liquid morph of the bell button); back closes it
     var notifOpen by remember { mutableStateOf(false) }
-    val notifMorph = remember { SearchMorph() }
+    // faithful = the drop / bud keep the exact proportions of the reference video (the bell is a circle, not a pill)
+    val notifMorph = remember { SearchMorph(faithful = true) }
+    // the three on/off states are read here, while the page opens, NOT when the card is composed: those system calls
+    // would otherwise land in the first (heaviest) frame of the morph and make it skip its first frames
+    val notifAccess = rememberNotifAccess()
     BackHandler(enabled = notifOpen) { notifOpen = false }
     val themeRow = remember { arrayOfNulls<LayoutCoordinates>(1) }
 
@@ -193,7 +197,7 @@ private fun SettingsMain(dark: Boolean, onClose: () -> Unit, onTheme: (Rect?) ->
             mirrored = true,
             inPlace = true,
             onDismiss = { notifOpen = false }
-        ) { NotificationsCard(dark, onClose = { notifOpen = false }) }
+        ) { NotificationsCard(dark, notifAccess, onClose = { notifOpen = false }) }
         HomeSearchButton(
             open = notifOpen,
             dark = dark,
