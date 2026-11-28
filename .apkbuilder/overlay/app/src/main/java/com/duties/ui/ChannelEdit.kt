@@ -1,5 +1,7 @@
 package com.duties.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.graphics.Bitmap
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -116,6 +118,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.runtime.derivedStateOf
+import com.duties.DeepLink
 import com.duties.R
 import com.google.firebase.firestore.FirebaseFirestore
 import com.kyant.backdrop.Backdrop
@@ -258,7 +261,7 @@ internal fun ChannelEditPage(
         var photoSource by remember(channel.id) { mutableStateOf<Bitmap?>(null) }
         var photoTf by remember(channel.id) { mutableStateOf<CropTransform?>(null) }
         var photoChanged by remember(channel.id) { mutableStateOf(false) }
-        // public / private (only the owner may change it, see firestore.rules)
+        // public / private (the owner, and a supervisor with the "edit" permission, see firestore.rules)
         var isPublic by remember(channel.id) { mutableStateOf(channel.isPublic) }
         // the edit card (the pencil button turns into it, the same liquid morph as the bell button of the settings page)
         var editOpen by remember { mutableStateOf(false) }
@@ -293,7 +296,7 @@ internal fun ChannelEditPage(
 
         val nameOk = isValidName(name)
         val userOk = isValidUsername(username)
-        val typeChanged = isOwnerMe && isPublic != channel.isPublic
+        val typeChanged = canEdit && isPublic != channel.isPublic
         val changed = name.trim() != channel.name || username != channel.username || bio.trim() != channel.bio || photoChanged || typeChanged
         // the problems show as soon as something was changed (the Save button stays dim until everything is right)
         val showErr = showErrors || changed
@@ -735,7 +738,7 @@ internal fun ChannelEditPage(
                         username = username,
                         bio = bio,
                         isPublic = isPublic,
-                        showType = isOwnerMe,
+                        link = DeepLink.channelUrl(channel.id),
                         nameError = nameError,
                         userError = userError,
                         usernameBad = username.length < USERNAME_MIN,
@@ -834,7 +837,7 @@ internal fun ChannelEditPage(
 /**
  * What is inside the card that grows out of the pencil button (drawn by [MorphPanel], the same liquid morph as the notifications
  * card of the settings page, see NotificationsCard). Same layout as that card: a title (the X sits at its end, exactly where the
- * button was), then the fields: name, @username, bio and - for the owner only - the public / private switch.
+ * button was), then the fields: name, @username, bio, the public / private switch and the link of the channel (copy).
  * The fields change the state of the page directly; the page's "Save" button saves them.
  * When the keyboard (or the screen's edge) would cover the bottom of the card, the list inside it gets shorter and scrolls.
  */
@@ -848,7 +851,7 @@ private fun ChannelEditCard(
     username: String,
     bio: String,
     isPublic: Boolean,
-    showType: Boolean,
+    link: String,
     nameError: String?,
     userError: String?,
     usernameBad: Boolean,
@@ -940,28 +943,106 @@ private fun ChannelEditCard(
                     multiline = true,
                     imeAction = ImeAction.Default
                 )
-                if (showType) {
-                    // public <-> private: only the owner can change it (the rules of the database say so too)
-                    Spacer(Modifier.height(12.dp))
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(fg.copy(alpha = 0.08f))
-                            .padding(horizontal = 14.dp)
-                    ) {
-                        OptionSwitch(
-                            title = stringResource(R.string.channel_type_toggle_title),
-                            sub = stringResource(if (isPublic) R.string.channel_type_public_hint else R.string.channel_type_private_hint),
-                            selected = isPublic,
-                            onSelect = onPublic,
-                            bd = bd, dark = dark, fg = fg
-                        )
-                    }
+                // public <-> private (the owner, or a supervisor with the "edit" permission: the card only opens for them)
+                Spacer(Modifier.height(12.dp))
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(fg.copy(alpha = 0.08f))
+                        .padding(horizontal = 14.dp)
+                ) {
+                    OptionSwitch(
+                        title = stringResource(R.string.channel_type_toggle_title),
+                        sub = stringResource(if (isPublic) R.string.channel_type_public_hint else R.string.channel_type_private_hint),
+                        selected = isPublic,
+                        onSelect = onPublic,
+                        bd = bd, dark = dark, fg = fg
+                    )
                 }
+                // the link of this channel (every channel has its own): tap = copy
+                Spacer(Modifier.height(12.dp))
+                ChannelLinkField(link = link, isPublic = isPublic, fg = fg, accent = accent)
                 Spacer(Modifier.height(18.dp))
             }
         }
+    }
+}
+
+/**
+ * The link of the channel: a small label, then a soft rounded box with the link (always left-to-right) and a "copy" pill. A tap
+ * anywhere on the box copies it. Anybody who opens the link on a phone with the app is asked to join the channel (a PUBLIC
+ * channel); a private one only tells him that it is by invitation (see MainScreen).
+ */
+@Composable
+private fun ChannelLinkField(link: String, isPublic: Boolean, fg: Color, accent: Color) {
+    val context = LocalContext.current
+    var copied by remember { mutableStateOf(false) }
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(1600)
+            copied = false
+        }
+    }
+    val shape = RoundedCornerShape(23.dp)
+    val pillColor by animateColorAsState(if (copied) Color(0xFF30D158) else accent, tween(200), label = "linkPill")
+    Column(Modifier.fillMaxWidth()) {
+        BasicText(
+            stringResource(R.string.channel_link_label),
+            modifier = Modifier.padding(horizontal = 6.dp),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            style = TextStyle(color = fg.copy(alpha = 0.75f), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        )
+        Spacer(Modifier.height(5.dp))
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(46.dp)
+                .clip(shape)
+                .background(fg.copy(alpha = 0.08f))
+                .border(1.dp, fg.copy(alpha = 0.14f), shape)
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                    runCatching {
+                        context.getSystemService(ClipboardManager::class.java)
+                            ?.setPrimaryClip(ClipData.newPlainText("channel link", link))
+                    }
+                    copied = true
+                }
+                .padding(start = 14.dp, end = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            GlyphIcon(R.drawable.ic_link, fg.copy(alpha = 0.6f), 18.dp)
+            Spacer(Modifier.width(8.dp))
+            BasicText(
+                link,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = TextStyle(
+                    color = fg.copy(alpha = 0.8f), fontSize = 12.sp,
+                    textAlign = TextAlign.Left, textDirection = TextDirection.Ltr
+                )
+            )
+            Spacer(Modifier.width(8.dp))
+            Box(
+                Modifier.clip(RoundedCornerShape(50)).background(pillColor).padding(horizontal = 12.dp, vertical = 7.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                BasicText(
+                    stringResource(if (copied) R.string.channel_link_copied else R.string.channel_link_copy),
+                    maxLines = 1,
+                    softWrap = false,
+                    style = TextStyle(color = Color.White, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+                )
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        BasicText(
+            stringResource(if (isPublic) R.string.channel_link_public_hint else R.string.channel_link_private_hint),
+            modifier = Modifier.padding(horizontal = 6.dp),
+            style = TextStyle(color = fg.copy(alpha = 0.55f), fontSize = 11.5.sp, lineHeight = 16.sp)
+        )
     }
 }
 

@@ -1,0 +1,221 @@
+{
+  "rules": {
+    // Duties - Realtime Database rules
+    // bannerGifs/{uid} = the animated GIF banner of one account (max 16 MB), cut in pieces:
+    //   meta = { size, chunks, zoom, ox, oy, updatedAt }
+    //   data/{0..42} = base64 text of each piece (512 KB each: one value may not pass 10 MB)
+    // Everybody signed in can read it, only the owner can write it.
+    //
+    // profilePics/{uid} = { avatar, banner, updatedAt }: the full profile photo (512 px) and the still banner
+    //   (1080 px) as base64 JPEG text, shown on the profile page other people open. Everybody signed in can read
+    //   it, only the owner can write it.
+    //
+    // chats/{channelId} = the chat of one channel (the channels themselves live in Firestore):
+    //   owner            = uid of the channel owner (written once, passes to another member when the owner leaves)
+    //   members/{uid}    = true : who may read and write the chat (the owner adds the members, a member can leave, anybody can join a public chat)
+    //   public           = true / false : the owner (or a supervisor with "edit") writes it (mirrors the channel's isPublic). When true, anybody
+    //                      signed in can add himself to "members" (Join button of the Home search)
+    //   invited/{uid}    = true : written by the owner when he invites someone, lets that person add himself
+    //                             to "members" when he accepts (and it is used up)
+    //   admins/{uid}     = true : supervisors, written only by the owner. Only the OWNER and the SUPERVISORS can write
+    //                      messages, every other member only reads.
+    //   adminPerms/{uid} = { ban, kick, edit }: what a supervisor may do, each one true. Written only by the owner (a copy of
+    //                      "adminPerms" of the channel in Firestore). Here only "ban" and "kick" are enforced:
+    //                        kick = a supervisor can remove an ORDINARY member (not the owner, not a supervisor)
+    //                        ban  = a supervisor can write banned/{uid} and remove the member, and lift a ban
+    //   banned/{uid}     = true : banned from the channel. A banned person can not be added to "members" by anybody, not even by
+    //                      himself (public Join / accepted invitation) until the ban is lifted. Written by the owner or by a
+    //                      supervisor with "ban" (a supervisor can not ban the owner or another supervisor).
+    //   messages/{id}    = { uid, name, text, createdAt }: only members read; only the owner / supervisors write; a message
+    //                      can be created only with the sender's own uid and the server time, and it can never be edited.
+    // The owner can delete the whole chat (when the channel is deleted).
+
+    ".read": false,
+    ".write": false,
+
+    "bannerGifs": {
+      "$uid": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.uid === $uid",
+
+        "meta": {
+          ".validate": "newData.hasChildren(['size', 'chunks', 'zoom', 'ox', 'oy', 'updatedAt'])",
+          "size": {
+            ".validate": "newData.isNumber() && newData.val() > 0 && newData.val() <= 16777216"
+          },
+          "chunks": {
+            ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 43"
+          },
+          "zoom": {
+            ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 8"
+          },
+          "ox": {
+            ".validate": "newData.isNumber() && newData.val() >= -100 && newData.val() <= 100"
+          },
+          "oy": {
+            ".validate": "newData.isNumber() && newData.val() >= -100 && newData.val() <= 100"
+          },
+          "updatedAt": {
+            ".validate": "newData.isNumber()"
+          },
+          "$other": {
+            ".validate": false
+          }
+        },
+
+        "data": {
+          "$i": {
+            ".validate": "$i.matches(/^[0-9]{1,2}$/) && newData.isString() && newData.val().length <= 524288"
+          }
+        },
+
+        "$other": {
+          ".validate": false
+        }
+      }
+    },
+
+    "profilePics": {
+      "$uid": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.uid === $uid",
+        "avatar": {
+          ".validate": "newData.isString() && newData.val().length <= 400000"
+        },
+        "banner": {
+          ".validate": "newData.isString() && newData.val().length <= 800000"
+        },
+        "updatedAt": {
+          ".validate": "newData.isNumber()"
+        },
+        "$other": {
+          ".validate": false
+        }
+      }
+    },
+
+    // fcmTokens/{uid}/{token} = true : the push-notification (FCM) tokens of the phones of one account.
+    // Only the owner writes his own tokens. Nobody can read them from the app: only the push Worker
+    // (it uses the service account, which skips these rules) reads them to send the notifications.
+    "fcmTokens": {
+      "$uid": {
+        ".write": "auth != null && auth.uid === $uid",
+        "$token": {
+          ".validate": "newData.val() === true && $token.length > 20 && $token.length < 400"
+        }
+      }
+    },
+
+    "chats": {
+      "$cid": {
+        // only the owner, and only to delete the whole chat
+        ".write": "auth != null && !newData.exists() && data.child('owner').val() === auth.uid",
+
+        "owner": {
+          ".read": "auth != null && root.child('chats').child($cid).child('members').child(auth.uid).exists()",
+          // the first one to write it becomes the owner; after that only the owner can pass it on
+          ".write": "auth != null && ((!data.exists() && newData.val() === auth.uid) || data.val() === auth.uid)",
+          ".validate": "newData.isString() && newData.val().length <= 128"
+        },
+
+        "members": {
+          ".read": "auth != null && root.child('chats').child($cid).child('members').child(auth.uid).exists()",
+          "$uid": {
+            // REMOVE a member: the owner; the person himself (leaving); or a supervisor that was given "kick" or "ban"
+            //   (he can remove neither the owner nor another supervisor).
+            // ADD a member: the owner, or the person himself if he was invited / the chat is public.
+            //   Nobody can add a BANNED person.
+            ".write": "auth != null && ((!newData.exists() && (newData.parent().parent().child('owner').val() === auth.uid || auth.uid === $uid || (root.child('chats').child($cid).child('members').child(auth.uid).exists() && root.child('chats').child($cid).child('admins').child(auth.uid).exists() && (root.child('chats').child($cid).child('adminPerms').child(auth.uid).child('kick').val() === true || root.child('chats').child($cid).child('adminPerms').child(auth.uid).child('ban').val() === true) && $uid !== root.child('chats').child($cid).child('owner').val() && !root.child('chats').child($cid).child('admins').child($uid).exists()))) || (newData.exists() && !root.child('chats').child($cid).child('banned').child($uid).exists() && (newData.parent().parent().child('owner').val() === auth.uid || (auth.uid === $uid && (root.child('chats').child($cid).child('invited').child($uid).exists() || root.child('chats').child($cid).child('public').val() === true)))))",
+            ".validate": "newData.val() === true"
+          }
+        },
+
+        // what each supervisor may do (a copy of "adminPerms" of the channel): only the owner writes it, members read it
+        "adminPerms": {
+          ".read": "auth != null && root.child('chats').child($cid).child('members').child(auth.uid).exists()",
+          "$uid": {
+            ".write": "auth != null && newData.parent().parent().child('owner').val() === auth.uid",
+            "ban": {
+              ".validate": "newData.val() === true"
+            },
+            "kick": {
+              ".validate": "newData.val() === true"
+            },
+            "edit": {
+              ".validate": "newData.val() === true"
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
+        },
+
+        // banned people. The owner, or a supervisor with "ban" (who can neither ban the owner nor another supervisor;
+        // lifting a ban is always allowed to him). Members read it.
+        "banned": {
+          ".read": "auth != null && root.child('chats').child($cid).child('members').child(auth.uid).exists()",
+          "$uid": {
+            ".write": "auth != null && (newData.parent().parent().child('owner').val() === auth.uid || (root.child('chats').child($cid).child('members').child(auth.uid).exists() && root.child('chats').child($cid).child('admins').child(auth.uid).exists() && root.child('chats').child($cid).child('adminPerms').child(auth.uid).child('ban').val() === true && (!newData.exists() || ($uid !== root.child('chats').child($cid).child('owner').val() && !root.child('chats').child($cid).child('admins').child($uid).exists()))))",
+            ".validate": "newData.val() === true"
+          }
+        },
+
+        // true = a public channel: anybody signed in can add himself to "members" (the Join button).
+        // The owner, or a supervisor with the "edit" permission, writes it (it mirrors "isPublic" of the channel in Firestore)
+        "public": {
+          ".write": "auth != null && (newData.parent().child('owner').val() === auth.uid || (root.child('chats').child($cid).child('members').child(auth.uid).exists() && root.child('chats').child($cid).child('admins').child(auth.uid).exists() && root.child('chats').child($cid).child('adminPerms').child(auth.uid).child('edit').val() === true))",
+          ".validate": "newData.isBoolean()"
+        },
+
+        // supervisors: only the owner writes it; every member of the chat can read it
+        "admins": {
+          ".read": "auth != null && root.child('chats').child($cid).child('members').child(auth.uid).exists()",
+          "$uid": {
+            ".write": "auth != null && newData.parent().parent().child('owner').val() === auth.uid",
+            ".validate": "newData.val() === true"
+          }
+        },
+
+        "invited": {
+          "$uid": {
+            // the owner invites; the invited person removes his own invitation once he joined
+            ".write": "auth != null && (newData.parent().parent().child('owner').val() === auth.uid || (auth.uid === $uid && !newData.exists()))",
+            ".validate": "newData.val() === true"
+          }
+        },
+
+        "messages": {
+          ".read": "auth != null && root.child('chats').child($cid).child('members').child(auth.uid).exists()",
+          "$mid": {
+            // only the owner and the supervisors may CREATE a message (no edit, no delete)
+            ".write": "auth != null && !data.exists() && newData.exists() && root.child('chats').child($cid).child('members').child(auth.uid).exists() && (root.child('chats').child($cid).child('owner').val() === auth.uid || root.child('chats').child($cid).child('admins').child(auth.uid).exists())",
+            ".validate": "newData.hasChildren(['uid', 'name', 'text', 'createdAt']) && newData.child('uid').val() === auth.uid",
+            "uid": {
+              ".validate": "newData.isString()"
+            },
+            "name": {
+              ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 24"
+            },
+            "text": {
+              ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 2000"
+            },
+            "createdAt": {
+              ".validate": "newData.val() === now"
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
+        },
+
+        "$other": {
+          ".validate": false
+        }
+      }
+    },
+
+    "$other": {
+      ".validate": false
+    }
+  }
+}
