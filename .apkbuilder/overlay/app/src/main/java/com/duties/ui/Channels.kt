@@ -23,7 +23,8 @@ import java.io.ByteArrayOutputStream
  * Channels.kt — channels and invitations of the signed-in account, kept on Firestore.
  *
  *   channels/{id}              = { name, username, bio, ownerUid, members[uid], photo (small JPEG, base64), isPublic, createdAt,
- *                                  admins[uid], adminPerms{uid: ["ban","kick","edit"]}, adminTitles{uid: "custom name"}, banned[uid] }
+ *                                  admins[uid], adminPerms{uid: ["ban","kick","edit"]}, adminTitles{uid: "custom name"}, banned[uid],
+ *                                  restricted[uid] }
  *   channelUsernames/{lower}   = { uid, channelId }                    (every channel @username is unique)
  *   invites/{channelId}_{toUid} = { channelId, channelName, channelUsername, channelPhoto, fromUid, fromName,
  *                                  fromUsername, toUid, status: pending | accepted | declined, createdAt }
@@ -58,7 +59,12 @@ class Channel(
     /** uids of the banned people: they are not members and can not join (or accept an invitation) until the ban is lifted. */
     val banned: List<String> = emptyList(),
     /** True when the signed-in account is banned from this channel (the search shows "banned" instead of Join). */
-    val bannedMe: Boolean = false
+    val bannedMe: Boolean = false,
+    /**
+     * uids of the RESTRICTED members (only people who are still inside). A restricted member stays in the channel and can read
+     * it, but the list of members is hidden from him. The owner, or a supervisor with the "ban" permission, restricts / frees him.
+     */
+    val restricted: List<String> = emptyList()
 ) {
     /** Only the owner and the supervisors can write in the channel; everybody else only reads. */
     fun canWrite(uid: String): Boolean = ownerUid == uid || uid in admins
@@ -178,6 +184,9 @@ class ChannelsState(private val uid: String) {
             if (k is String && k in adminUids && v is String && v.isNotBlank()) titles[k] = v.take(ADMIN_TITLE_MAX)
         }
         val bannedUids = (d.get("banned") as? List<*>)?.filterIsInstance<String>()?.distinct() ?: emptyList()
+        // only people who are still inside count as restricted (a person who left, or was kicked / banned, is not)
+        val restrictedUids = (d.get("restricted") as? List<*>)?.filterIsInstance<String>()
+            ?.filter { it in memberUids && it != owner && it !in adminUids }?.distinct() ?: emptyList()
         return Channel(
             id = d.id,
             name = name,
@@ -194,7 +203,8 @@ class ChannelsState(private val uid: String) {
             adminPerms = perms,
             adminTitles = titles,
             banned = bannedUids,
-            bannedMe = uid in bannedUids
+            bannedMe = uid in bannedUids,
+            restricted = restrictedUids
         )
     }
 
@@ -385,6 +395,7 @@ class ChannelsState(private val uid: String) {
             ref.update(
                 "members", FieldValue.arrayRemove(targetUid),
                 "admins", FieldValue.arrayRemove(targetUid),
+                "restricted", FieldValue.arrayRemove(targetUid),
                 FieldPath.of("adminPerms", targetUid), FieldValue.delete(),
                 FieldPath.of("adminTitles", targetUid), FieldValue.delete()
             ).await()
@@ -412,6 +423,7 @@ class ChannelsState(private val uid: String) {
                 ref.update(
                     "members", FieldValue.arrayRemove(targetUid),
                     "banned", FieldValue.arrayUnion(targetUid),
+                    "restricted", FieldValue.arrayRemove(targetUid),
                     "admins", FieldValue.arrayRemove(targetUid),
                     FieldPath.of("adminPerms", targetUid), FieldValue.delete(),
                     FieldPath.of("adminTitles", targetUid), FieldValue.delete()
@@ -436,6 +448,20 @@ class ChannelsState(private val uid: String) {
         ChatRooms.unban(channel.id, targetUid)
         FirebaseFirestore.getInstance().collection("channels").document(channel.id)
             .update("banned", FieldValue.arrayRemove(targetUid))
+            .await()
+    }
+
+    /**
+     * The owner, or a supervisor with the "ban" permission: restricts ([on] = true) or frees ([on] = false) an ORDINARY member.
+     * A restricted member stays in the channel and can read it, but the list of members is hidden from him.
+     * Nobody can restrict the owner or a supervisor, or himself. It only changes the channel (Firestore): nothing in the
+     * chat room depends on it.
+     */
+    suspend fun restrictMember(channel: Channel, targetUid: String, on: Boolean) {
+        if (targetUid == channel.ownerUid || targetUid == uid) return
+        if (!channel.can(uid, Perm.BAN) || targetUid in channel.admins) return
+        FirebaseFirestore.getInstance().collection("channels").document(channel.id)
+            .update("restricted", if (on) FieldValue.arrayUnion(targetUid) else FieldValue.arrayRemove(targetUid))
             .await()
     }
 

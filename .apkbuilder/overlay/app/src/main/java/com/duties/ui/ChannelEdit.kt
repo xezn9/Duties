@@ -52,7 +52,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.TransformOrigin
@@ -133,12 +136,19 @@ import kotlinx.coroutines.tasks.await
  *                    Kick and Ban for everybody.
  *       supervisor : Kick and / or Ban, only the ones the owner allowed him, and only on ordinary members.
  *     Only the owner and the supervisors can write in the channel.
- *   - under the members: the BANNED people (only for those who may ban) with a button that lifts the ban.
+ *   - under the members, three buttons (each opens a glass panel):
+ *       Supervisors' permissions (owner only): every supervisor with his Ban / Kick / Edit switches.
+ *       Banned      (those who may ban): the banned people, each with a button that lifts the ban.
+ *       Restricted  (those who may ban): the restricted people, each with a button that lifts the restriction.
+ *     A RESTRICTED member stays in the channel and can read it, but the list of members is hidden from him.
+ *   - the "Owner" badge on the owner's card is a button: a tap opens the owner's account (his profile page).
  *
  * LOOK (v2): a cover made from the channel photo, the photo on its edge, name / @username / bio typed right on the page (no field
- * cards), three small chips, the members as two-in-a-row cards (a switch to the banned people when there are some), and a wide
- * Save button that slides up from the bottom only when something was changed. The page opens as a sheet that grows out of
- * the name bar (see ChannelEditMorph).
+ * cards), three small chips, the members as two-in-a-row cards, the three buttons above, and a wide Save button that slides
+ * up from the bottom only when something was changed.
+ *
+ * OPENING: the page is opened with the HyperSpring push (PushStack in ChatScreen.kt, the same animation as the edit-account
+ * page): the chat below dissolves, the name bar grows into the page and its parts come out of that point one after another.
  *
  * It is drawn inside the chat's sliding layer (see ChatScreen.kt), so it slides away together with the chat.
  */
@@ -155,8 +165,10 @@ private val EditAccent: Color get() = AppAccent.pick(EditOrange)
 /** The pieces of the page start rising this long after the page starts opening (the sheet is already growing). */
 private const val INTRO_BASE_MS = 150L
 
-private const val EDIT_OPEN_MS = 560
-private const val EDIT_CLOSE_MS = 340
+private const val PANEL_NONE = 0
+private const val PANEL_ADMINS = 1
+private const val PANEL_BANNED = 2
+private const val PANEL_RESTRICTED = 3
 
 // =====================================================================
 // Names of the members (users/{uid}); their small photos come from UserPhotos
@@ -195,102 +207,12 @@ internal object MemberDirectory {
 // =====================================================================
 
 /**
- * Hosts the page. [open] = true shows it, false plays the way back. [onOpenProfile] opens the profile of a member
- * (ChatMorph hosts that page, above this one).
- *
- * THE OPENING: the page is ONE sheet that starts exactly on the name bar ([from]) and grows to the whole screen:
- * first it gets wide (the width runs a little ahead), then it falls down to the bottom while its corners straighten.
- * The chat under it dims. The content is never squashed: it is only revealed by the growing sheet, it fades in and
- * settles from slightly bigger, and then the pieces (photo, numbers, fields, members) rise one after another.
+ * The channel page. It is the DETAIL page of a HyperSpring PushStack (see ChatMorph in ChatScreen.kt): the stack makes the
+ * page grow out of the name bar and dissolves the chat below, and the parts of the page come out of that point (see [Rise]).
+ * [onOpenProfile] opens the profile of a person (ChatMorph hosts that page, above this one).
  */
 @Composable
-internal fun ChannelEditMorph(
-    open: Boolean,
-    from: Rect,
-    channel: Channel,
-    channels: ChannelsState,
-    dark: Boolean,
-    uid: String,
-    myName: String,
-    myPhoto: Bitmap?,
-    onClose: () -> Unit,
-    onOpenProfile: (ProfileTarget) -> Unit
-) {
-    val p = remember { Animatable(0f) }
-    var visible by remember { mutableStateOf(false) }
-
-    BackHandler(enabled = open) { onClose() }
-
-    LaunchedEffect(open) {
-        if (open) {
-            visible = true
-            p.snapTo(0f)
-            p.animateTo(1f, tween(EDIT_OPEN_MS, easing = CIRCLE_GROW))
-        } else if (visible) {
-            p.animateTo(0f, tween(EDIT_CLOSE_MS, easing = CLOSE_EASE))
-            visible = false
-        }
-    }
-    if (!visible) return
-
-    val base = if (dark) Color.Black else Color(0xFFF4F5F9)
-
-    Box(
-        Modifier
-            .fillMaxSize()
-            .drawBehind { drawRect(Color.Black.copy(alpha = 0.5f * p.value)) }       // the chat dims
-            .pointerInput(Unit) { detectTapGestures { } }                            // covers the chat below
-    ) {
-        Box(
-            Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    val k = p.value
-                    val w = size.width
-                    val h = size.height
-                    // the starting rectangle: the name bar (a bar at the top if its place is not known)
-                    val bar = if (from.width > 1f && from.height > 1f) from
-                    else Rect(w * 0.18f, 40.dp.toPx(), w * 0.82f, 96.dp.toPx())
-                    val kx = FastOutSlowInEasing.transform(seg(k, 0f, 0.8f))        // the width runs a little ahead
-                    val r = Rect(
-                        lerpF(bar.left, 0f, kx),
-                        lerpF(bar.top, 0f, k),
-                        lerpF(bar.right, w, kx),
-                        lerpF(bar.bottom, h, k)
-                    )
-                    shape = RoundedRectClip(r, lerpF(bar.height / 2f, 0f, k).coerceAtLeast(0f))
-                    clip = true
-                }
-                .background(base)
-        ) {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        val k = p.value
-                        alpha = seg(k, 0.10f, 0.50f)
-                        val s = 1.05f - 0.05f * k
-                        scaleX = s
-                        scaleY = s
-                    }
-            ) {
-                ChannelEditPage(
-                    channel = channel,
-                    channels = channels,
-                    dark = dark,
-                    uid = uid,
-                    myName = myName,
-                    myPhoto = myPhoto,
-                    onClose = onClose,
-                    onOpenProfile = onOpenProfile
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun ChannelEditPage(
+internal fun ChannelEditPage(
     channel: Channel,
     channels: ChannelsState,
     dark: Boolean,
@@ -322,7 +244,8 @@ private fun ChannelEditPage(
         var photoChanged by remember(channel.id) { mutableStateOf(false) }
 
         var showErrors by remember { mutableStateOf(false) }
-        var tab by remember { mutableStateOf(0) }            // 0 = members, 1 = banned
+        // the glass panel that is open: supervisors' permissions / banned / restricted (PANEL_NONE = none)
+        var panel by remember { mutableStateOf(PANEL_NONE) }
         var saving by remember { mutableStateOf(false) }
         var saved by remember { mutableStateOf(false) }
         var usernameTaken by remember { mutableStateOf(false) }
@@ -330,6 +253,7 @@ private fun ChannelEditPage(
         // the member whose options panel is open (owner, or a supervisor that may kick / ban)
         var menuUid by remember { mutableStateOf<String?>(null) }
         BackHandler(enabled = menuUid != null) { menuUid = null }
+        BackHandler(enabled = panel != PANEL_NONE) { panel = PANEL_NONE }
         // the "kick / ban this member?" question (a LiquidDialog). The three values stay while the dialog fades out
         var askShow by remember { mutableStateOf(false) }
         var askUid by remember { mutableStateOf("") }
@@ -406,6 +330,8 @@ private fun ChannelEditPage(
         fun kick(target: String) = act(true) { channels.kickMember(channel, target) }
         fun ban(target: String) = act(true) { channels.banMember(channel, target) }
         fun unban(target: String) = act(false) { channels.unbanMember(channel, target) }
+        // owner, or a supervisor that may ban: restricts / un-restricts an ordinary member
+        fun restrict(target: String, on: Boolean, closeMenu: Boolean) = act(closeMenu) { channels.restrictMember(channel, target, on) }
 
         // Records the WHOLE page, so the dialog's glass refracts everything behind it.
         val screenBackdrop = rememberLayerBackdrop()
@@ -413,7 +339,7 @@ private fun ChannelEditPage(
         val glassBackdrop = rememberLayerBackdrop()
         val dots = rememberDotsState()
 
-        Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().background(if (dark) Color.Black else Color(0xFFF4F5F9))) {
             Box(Modifier.fillMaxSize().layerBackdrop(screenBackdrop).dotsTouch(dots)) {
                 Box(Modifier.fillMaxSize().layerBackdrop(glassBackdrop)) { DotBackground(dots, dark) }
                 val bd: Backdrop = glassBackdrop
@@ -431,7 +357,9 @@ private fun ChannelEditPage(
                 // the member cards sit on a soft fill (no glass: there can be many of them)
                 val rowFill = if (dark) Color.White.copy(alpha = 0.07f) else Color.White.copy(alpha = 0.75f)
                 val bannedList = if (canBan) channel.banned else emptyList()
-                val tabNow = if (bannedList.isNotEmpty()) tab else 0
+                val restrictedList = if (canBan) channel.restricted else emptyList()
+                // a restricted member only reads: the list of members is hidden from him (the owner / supervisors are never restricted)
+                val restrictedMe = uid in channel.restricted && !isOwnerMe && uid !in channel.admins
                 val coverH = topInset + 250.dp
                 val memberPairs = remember(ordered) { ordered.chunked(2) }
                 val nameError = if (showErr && !nameOk) stringResource(R.string.error_name_empty) else null
@@ -441,7 +369,10 @@ private fun ChannelEditPage(
                     else -> null
                 }
                 val membersLabel = stringResource(R.string.channel_members_header, ordered.size)
-                val bannedLabel = if (bannedList.isNotEmpty()) stringResource(R.string.channel_banned_header, bannedList.size) else null
+                val adminPermsTitle = stringResource(R.string.manage_admin_perms)
+                val bannedTitle = stringResource(R.string.manage_banned)
+                val restrictedTitle = stringResource(R.string.manage_restricted)
+                val noneWord = stringResource(R.string.manage_none)
                 val density = LocalDensity.current
                 // the title is white over the cover, and turns to the normal text colour when the list scrolls up
                 val titleColor by remember(fg) {
@@ -494,19 +425,29 @@ private fun ChannelEditPage(
                         )
                     }
 
-                    // ---- members / banned: a small switch when there are banned people, else just a title
+                    // ---- the members: a title, then cards two in a row
                     item(key = "tabs") {
                         Rise(
                             delayMs = 420,
                             animate = intro,
                             modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 26.dp, bottom = 14.dp)
                         ) {
-                            SectionTabs(tabNow, { tab = it }, membersLabel, bannedLabel, fg, accent)
+                            BasicText(
+                                membersLabel,
+                                modifier = Modifier.padding(horizontal = 4.dp),
+                                style = TextStyle(color = fg.copy(alpha = 0.7f), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                            )
                         }
                     }
 
-                    if (tabNow == 0) {
-                        // members: cards, two in a row
+                    if (restrictedMe) {
+                        // restricted: no list of members, only a note
+                        item(key = "restrictedNote") {
+                            Rise(delayMs = 480, animate = intro, modifier = Modifier.padding(horizontal = 16.dp)) {
+                                RestrictedNote(rowFill, fg)
+                            }
+                        }
+                    } else {
                         itemsIndexed(memberPairs, key = { _, pr -> "mp_" + pr.joinToString("_") }) { index, pr ->
                             Rise(
                                 delayMs = 480 + minOf(index, 5) * 60,
@@ -520,6 +461,7 @@ private fun ChannelEditPage(
                                             uid = memberUid,
                                             isOwnerRow = memberUid == channel.ownerUid,
                                             isAdmin = memberUid in channel.admins,
+                                            isRestricted = memberUid in channel.restricted,
                                             adminTitle = channel.adminTitles[memberUid].orEmpty(),
                                             isMe = memberUid == uid,
                                             // the options button: never on the owner's card or on my own. The owner has it on
@@ -538,19 +480,27 @@ private fun ChannelEditPage(
                                 }
                             }
                         }
-                    } else {
-                        // banned people (only for those who may lift a ban)
-                        itemsIndexed(bannedList, key = { _, b -> "b_$b" }) { index, bannedUid ->
-                            BannedRow(
-                                modifier = Modifier.animateItem().padding(horizontal = 16.dp),
-                                uid = bannedUid,
-                                onUnban = { unban(bannedUid) },
-                                first = index == 0,
-                                last = index == bannedList.lastIndex,
-                                dark = dark,
-                                fg = fg,
-                                onOpenProfile = onOpenProfile
-                            )
+
+                        // ---- the three buttons under the members: supervisors' permissions / banned / restricted
+                        if (isOwnerMe || canBan) {
+                            item(key = "manage") {
+                                val rows = buildList<ManageItem> {
+                                    if (isOwnerMe) {
+                                        add(ManageItem(PANEL_ADMINS, R.drawable.ic_settings, EditMint, adminPermsTitle, adminsWord(channel.admins.size)))
+                                    }
+                                    if (canBan) {
+                                        add(ManageItem(PANEL_BANNED, R.drawable.ic_lock, EditRed, bannedTitle, if (bannedList.isEmpty()) noneWord else bannedList.size.toString()))
+                                        add(ManageItem(PANEL_RESTRICTED, R.drawable.ic_mute, EditOrange, restrictedTitle, if (restrictedList.isEmpty()) noneWord else restrictedList.size.toString()))
+                                    }
+                                }
+                                Rise(
+                                    delayMs = 560 + minOf(memberPairs.size, 5) * 60,
+                                    animate = intro,
+                                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp)
+                                ) {
+                                    ManageGroup(rows, rowFill, fg) { panel = it }
+                                }
+                            }
                         }
                     }
                 }
@@ -655,6 +605,8 @@ private fun ChannelEditPage(
                             onAdmin = { on -> setAdmin(menuTarget, on) },
                             onPerm = { perm, on -> setPerm(menuTarget, perm, on) },
                             onTitle = { t -> setTitle(menuTarget, t) },
+                            isRestricted = menuTarget in channel.restricted,
+                            onRestrict = { restrict(menuTarget, menuTarget !in channel.restricted, true) },
                             onAskKick = { askUid = menuTarget; askBan = false; askShow = true },
                             onAskBan = { askUid = menuTarget; askBan = true; askShow = true },
                             onDismiss = { menuUid = null }
@@ -663,6 +615,86 @@ private fun ChannelEditPage(
                         // the member is gone (kicked / left): close the panel
                         LaunchedEffect(menuTarget) { menuUid = null }
                     }
+                }
+
+                // ---- the glass panels of the three buttons under the members
+                when (panel) {
+                    PANEL_ADMINS -> if (isOwnerMe) {
+                        ManagePanel(
+                            title = adminPermsTitle,
+                            hint = stringResource(R.string.manage_admins_hint),
+                            bd = bd, dark = dark, fg = fg,
+                            onDismiss = { panel = PANEL_NONE }
+                        ) {
+                            val sups = channel.admins.filter { it != channel.ownerUid }
+                            if (sups.isEmpty()) {
+                                EmptyNote(stringResource(R.string.manage_admins_empty), fg)
+                            } else {
+                                sups.forEachIndexed { i, a ->
+                                    if (i > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(fg.copy(alpha = 0.10f)))
+                                    AdminPermsBlock(
+                                        uid = a,
+                                        perms = channel.adminPerms[a].orEmpty(),
+                                        bd = bd, dark = dark, fg = fg,
+                                        onPerm = { perm, on -> setPerm(a, perm, on) }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    PANEL_BANNED -> if (canBan) {
+                        ManagePanel(
+                            title = bannedTitle,
+                            hint = stringResource(R.string.manage_banned_hint),
+                            bd = bd, dark = dark, fg = fg,
+                            onDismiss = { panel = PANEL_NONE }
+                        ) {
+                            if (bannedList.isEmpty()) {
+                                EmptyNote(stringResource(R.string.manage_banned_empty), fg)
+                            } else {
+                                bannedList.forEachIndexed { index, bannedUid ->
+                                    BannedRow(
+                                        modifier = Modifier.padding(bottom = 2.dp),
+                                        uid = bannedUid,
+                                        onUnban = { unban(bannedUid) },
+                                        first = index == 0,
+                                        last = index == bannedList.lastIndex,
+                                        dark = dark,
+                                        fg = fg,
+                                        onOpenProfile = onOpenProfile
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    PANEL_RESTRICTED -> if (canBan) {
+                        ManagePanel(
+                            title = restrictedTitle,
+                            hint = stringResource(R.string.manage_restricted_hint),
+                            bd = bd, dark = dark, fg = fg,
+                            onDismiss = { panel = PANEL_NONE }
+                        ) {
+                            if (restrictedList.isEmpty()) {
+                                EmptyNote(stringResource(R.string.manage_restricted_empty), fg)
+                            } else {
+                                restrictedList.forEachIndexed { index, rUid ->
+                                    BannedRow(
+                                        modifier = Modifier.padding(bottom = 2.dp),
+                                        uid = rUid,
+                                        onUnban = { restrict(rUid, false, false) },
+                                        first = index == 0,
+                                        last = index == restrictedList.lastIndex,
+                                        dark = dark,
+                                        fg = fg,
+                                        onOpenProfile = onOpenProfile,
+                                        tint = EditOrange,
+                                        actionText = stringResource(R.string.channel_unrestrict)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    else -> Unit
                 }
             }
 
@@ -720,26 +752,37 @@ private fun CropFadeIn(content: @Composable () -> Unit) {
     Box(Modifier.fillMaxSize().graphicsLayer { alpha = a.value }) { content() }
 }
 
-/** An element that rises into its place: from lower, a little smaller and blurred, to sharp. [animate] = false skips it. */
+/**
+ * An element that comes out of the point that was tapped (the name bar), like the parts of the edit-account page (the
+ * HyperSpring Emerge): from small, blurred and shifted toward that point, to sharp in its place. [animate] = false shows it
+ * at once, so rows that scroll in later do not replay it.
+ */
 @Composable
 private fun Rise(delayMs: Int, animate: Boolean, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    val origin = LocalPushOrigin.current
     val a = remember { Animatable(if (animate) 0f else 1f) }
+    var center by remember { mutableStateOf(Offset.Unspecified) }
     LaunchedEffect(Unit) {
         if (animate) {
-            delay(INTRO_BASE_MS + delayMs.toLong())
-            a.animateTo(1f, tween(600, easing = SETTLE))
+            delay(delayMs.toLong() + 40L)
+            a.animateTo(1f, tween(680, easing = SETTLE))
         }
     }
     Box(
-        modifier.graphicsLayer {
-            val t = a.value
-            alpha = (t * 1.6f).coerceIn(0f, 1f)
-            translationY = 30.dp.toPx() * (1f - t)
-            val sc = 0.94f + 0.06f * t
-            scaleX = sc
-            scaleY = sc
-            renderEffect = if (t < 1f) blurEffect(8.dp.toPx() * (1f - t)) else null
-        }
+        modifier
+            .onGloballyPositioned { if (center == Offset.Unspecified) center = it.boundsInRoot().center }
+            .graphicsLayer {
+                val t = a.value
+                val c = if (center == Offset.Unspecified) origin else center
+                val maxDy = 180.dp.toPx()
+                translationX = (origin.x - c.x) * 0.25f * (1f - t)
+                translationY = ((origin.y - c.y) * 0.45f).coerceIn(-maxDy, maxDy) * (1f - t)
+                alpha = minOf(1f, t * 1.8f)
+                val sc = 0.84f + 0.16f * t
+                scaleX = sc
+                scaleY = sc
+                renderEffect = if (t < 1f) blurEffect(16.dp.toPx() * (1f - t)) else null
+            }
     ) { content() }
 }
 
@@ -1076,45 +1119,6 @@ private fun TextAction(text: String, icon: Int?, accent: Color, onClick: () -> U
     }
 }
 
-/** Members / banned switch. With no banned people it is only the title of the list. */
-@Composable
-private fun SectionTabs(tab: Int, onTab: (Int) -> Unit, membersLabel: String, bannedLabel: String?, fg: Color, accent: Color) {
-    if (bannedLabel == null) {
-        BasicText(
-            membersLabel,
-            modifier = Modifier.padding(horizontal = 4.dp),
-            style = TextStyle(color = fg.copy(alpha = 0.7f), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-        )
-    } else {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(18.dp))
-                .background(fg.copy(alpha = 0.07f))
-                .padding(4.dp)
-        ) {
-            TabPill(Modifier.weight(1f), membersLabel, tab == 0, accent, fg) { onTab(0) }
-            TabPill(Modifier.weight(1f), bannedLabel, tab == 1, EditRed, fg) { onTab(1) }
-        }
-    }
-}
-
-@Composable
-private fun TabPill(modifier: Modifier, text: String, selected: Boolean, tint: Color, fg: Color, onClick: () -> Unit) {
-    val bg by animateColorAsState(if (selected) tint.copy(alpha = 0.20f) else Color.Transparent, tween(200), label = "tabBg")
-    val c by animateColorAsState(if (selected) tint else fg.copy(alpha = 0.6f), tween(200), label = "tabText")
-    Box(
-        modifier
-            .clip(RoundedCornerShape(14.dp))
-            .background(bg)
-            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick)
-            .padding(vertical = 10.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        BasicText(text, maxLines = 1, style = TextStyle(color = c, fontSize = 14.sp, fontWeight = FontWeight.SemiBold))
-    }
-}
-
 /** The corners of a row inside a grouped list: only the first row is round on top, only the last one at the bottom. */
 private fun groupShape(first: Boolean, last: Boolean): RoundedCornerShape {
     val top = if (first) 26.dp else 0.dp
@@ -1132,6 +1136,7 @@ private fun MemberCard(
     uid: String,
     isOwnerRow: Boolean,
     isAdmin: Boolean,
+    isRestricted: Boolean,
     adminTitle: String,
     isMe: Boolean,
     showMenu: Boolean,
@@ -1155,9 +1160,11 @@ private fun MemberCard(
     val ownerWord = stringResource(R.string.channel_owner_badge)
     val adminWord = stringResource(R.string.channel_admin_badge)
     val youWord = stringResource(R.string.channel_you_badge)
+    val restrictedWord = stringResource(R.string.channel_restricted_badge)
     val badge: Pair<String, Color>? = when {
         isOwnerRow -> ownerWord to EditOrange
         isAdmin -> (if (adminTitle.isBlank()) adminWord else adminTitle) to EditMint
+        isRestricted -> restrictedWord to EditRed
         isMe -> youWord to EditViolet
         else -> null
     }
@@ -1192,8 +1199,13 @@ private fun MemberCard(
                 style = TextStyle(color = fg.copy(alpha = 0.55f), fontSize = 12.sp, textAlign = TextAlign.Center)
             )
             Spacer(Modifier.height(8.dp))
-            Box(Modifier.height(22.dp), contentAlignment = Alignment.Center) {
-                if (badge != null) Badge(badge.first, badge.second)
+            Box(Modifier.height(28.dp), contentAlignment = Alignment.Center) {
+                if (badge != null) {
+                    // the OWNER badge is a button: a tap opens the owner's account (it grows out of the badge)
+                    val ownerTap: ((Rect) -> Unit)? =
+                        if (isOwnerRow) ({ r: Rect -> onOpenProfile(ProfileTarget(uid, name, photo, r)) }) else null
+                    Badge(badge.first, badge.second, onClick = ownerTap)
+                }
             }
         }
         if (showMenu) {
@@ -1239,6 +1251,8 @@ private fun MemberMenu(
     onAdmin: (Boolean) -> Unit,
     onPerm: (String, Boolean) -> Unit,
     onTitle: (String) -> Unit,
+    isRestricted: Boolean,
+    onRestrict: () -> Unit,
     onAskKick: () -> Unit,
     onAskBan: () -> Unit,
     onDismiss: () -> Unit
@@ -1347,6 +1361,15 @@ private fun MemberMenu(
                 Spacer(Modifier.height(10.dp))
             }
 
+            // ---- restrict / lift the restriction (ordinary members only; whoever may ban). No question: it can be undone
+            if (canBan && !isAdmin) {
+                DangerButton(
+                    text = stringResource(if (isRestricted) R.string.member_menu_unrestrict else R.string.member_menu_restrict),
+                    tint = EditOrange,
+                    onClick = onRestrict
+                )
+                Spacer(Modifier.height(8.dp))
+            }
             // ---- kick / ban: a tap opens the question (LiquidDialog), the dialog's red button does it
             if (canKick) {
                 DangerButton(text = stringResource(R.string.member_menu_kick), onClick = onAskKick)
@@ -1359,21 +1382,21 @@ private fun MemberMenu(
     }
 }
 
-/** A soft red button (kick / ban). It does not act by itself: it opens the question dialog. */
+/** A soft coloured button (red = kick / ban, which open the question dialog; orange = restrict, which acts at once). */
 @Composable
-private fun DangerButton(text: String, onClick: () -> Unit) {
+private fun DangerButton(text: String, tint: Color = EditRed, onClick: () -> Unit) {
     Box(
         Modifier
             .fillMaxWidth()
             .height(50.dp)
             .clip(RoundedCornerShape(25.dp))
-            .background(EditRed.copy(alpha = 0.18f))
+            .background(tint.copy(alpha = 0.18f))
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         BasicText(
             text,
-            style = TextStyle(color = EditRed, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            style = TextStyle(color = tint, fontSize = 16.sp, fontWeight = FontWeight.Bold)
         )
     }
 }
@@ -1458,13 +1481,16 @@ private fun BannedRow(
     last: Boolean,
     dark: Boolean,
     fg: Color,
-    onOpenProfile: (ProfileTarget) -> Unit
+    onOpenProfile: (ProfileTarget) -> Unit,
+    tint: Color = EditRed,
+    actionText: String = ""
 ) {
     val context = LocalContext.current
     LaunchedEffect(uid) {
         MemberDirectory.request(uid)
         UserPhotos.request(context, uid)
     }
+    val actionLabel = actionText.ifEmpty { stringResource(R.string.channel_unban) }
     val info = MemberDirectory.info[uid]
     val name = info?.name ?: ""
     val username = info?.username.orEmpty()
@@ -1483,7 +1509,7 @@ private fun BannedRow(
         modifier
             .fillMaxWidth()
             .clip(groupShape(first, last))
-            .background(EditRed.copy(alpha = if (dark) 0.12f else 0.10f))
+            .background(tint.copy(alpha = if (dark) 0.12f else 0.10f))
     ) {
         Row(
             Modifier
@@ -1531,13 +1557,13 @@ private fun BannedRow(
                 contentAlignment = Alignment.Center
             ) {
                 BasicText(
-                    stringResource(R.string.channel_unban),
+                    actionLabel,
                     style = TextStyle(color = fg.copy(alpha = if (busy) 0.5f else 1f), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 )
             }
         }
         if (!last) {
-            Box(Modifier.fillMaxWidth().padding(start = 72.dp).height(0.7.dp).background(EditRed.copy(alpha = 0.18f)))
+            Box(Modifier.fillMaxWidth().padding(start = 72.dp).height(0.7.dp).background(tint.copy(alpha = 0.18f)))
         }
     }
 }
@@ -1572,14 +1598,239 @@ private fun OptionSwitch(
     }
 }
 
+/** A small pill. With [onClick] it is a button (it shrinks a little while pressed); the callback gets the pill's bounds. */
 @Composable
-private fun Badge(text: String, tint: Color) {
+private fun Badge(text: String, tint: Color, onClick: ((Rect) -> Unit)? = null) {
+    var bounds by remember { mutableStateOf(Rect.Zero) }
+    val source = remember { MutableInteractionSource() }
+    val pressed by source.collectIsPressedAsState()
+    val press by animateFloatAsState(if (pressed) 0.9f else 1f, spring(dampingRatio = 0.6f, stiffness = 500f), label = "badgePress")
     Box(
         Modifier
+            .graphicsLayer {
+                scaleX = press
+                scaleY = press
+            }
+            .onGloballyPositioned { bounds = it.boundsInRoot() }
             .clip(RoundedCornerShape(50))
-            .background(tint.copy(alpha = 0.22f))
-            .padding(horizontal = 8.dp, vertical = 2.dp)
+            .background(tint.copy(alpha = if (onClick != null) 0.30f else 0.22f))
+            .then(
+                if (onClick != null) Modifier.clickable(interactionSource = source, indication = null) { onClick(bounds) }
+                else Modifier
+            )
+            .padding(horizontal = if (onClick != null) 12.dp else 8.dp, vertical = if (onClick != null) 4.dp else 2.dp)
     ) {
         BasicText(text, maxLines = 1, style = TextStyle(color = tint, fontSize = 11.sp, fontWeight = FontWeight.SemiBold))
     }
+}
+
+// =====================================================================
+// The three buttons under the members + their glass panels
+// =====================================================================
+
+private class ManageItem(val panel: Int, val icon: Int, val tint: Color, val title: String, val sub: String)
+
+/** The buttons in one group: only the first is round on top, only the last at the bottom (like the other grouped lists). */
+@Composable
+private fun ManageGroup(items: List<ManageItem>, fill: Color, fg: Color, onOpen: (Int) -> Unit) {
+    Column(Modifier.fillMaxWidth()) {
+        items.forEachIndexed { i, item ->
+            ManageRow(item, fill, fg, first = i == 0, last = i == items.lastIndex) { onOpen(item.panel) }
+            if (i != items.lastIndex) Spacer(Modifier.height(2.dp))
+        }
+    }
+}
+
+/** One button: coloured icon, title, a short line (a number or a word) and the arrow at the far end. */
+@Composable
+private fun ManageRow(item: ManageItem, fill: Color, fg: Color, first: Boolean, last: Boolean, onClick: () -> Unit) {
+    val source = remember { MutableInteractionSource() }
+    val pressed by source.collectIsPressedAsState()
+    val press by animateFloatAsState(if (pressed) 0.97f else 1f, spring(dampingRatio = 0.7f, stiffness = 500f), label = "manageRowPress")
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .graphicsLayer {
+                scaleX = press
+                scaleY = press
+            }
+            .clip(groupShape(first, last))
+            .background(fill)
+            .clickable(interactionSource = source, indication = null, onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier.size(38.dp).clip(CircleShape).background(item.tint.copy(alpha = 0.18f)),
+            contentAlignment = Alignment.Center
+        ) { GlyphIcon(item.icon, item.tint, 20.dp) }
+        Spacer(Modifier.width(12.dp))
+        BasicText(
+            item.title,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            style = TextStyle(color = fg, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+        )
+        BasicText(
+            item.sub,
+            maxLines = 1,
+            style = TextStyle(color = fg.copy(alpha = 0.5f), fontSize = 13.sp)
+        )
+        Spacer(Modifier.width(6.dp))
+        GlyphIcon(R.drawable.ic_chevron_left, fg.copy(alpha = 0.4f), 18.dp)
+    }
+}
+
+/**
+ * A glass panel over the page (same look as the member options): a title, one line that explains it, then [content].
+ * A tap outside the panel (or Back) closes it. It scrolls when it is taller than the screen.
+ */
+@Composable
+private fun ManagePanel(
+    title: String,
+    hint: String,
+    bd: Backdrop,
+    dark: Boolean,
+    fg: Color,
+    onDismiss: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    val a = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { a.animateTo(1f, spring(dampingRatio = 0.78f, stiffness = 420f)) }
+    val shape = RoundedCornerShape(32.dp)
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .drawBehind { drawRect(Color.Black.copy(alpha = 0.45f * a.value.coerceIn(0f, 1f))) }
+            .pointerInput(Unit) { detectTapGestures { onDismiss() } }
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .imePadding()
+            .padding(vertical = 12.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            Modifier
+                .padding(horizontal = 22.dp)
+                .fillMaxWidth()
+                .graphicsLayer {
+                    val k = a.value
+                    val sc = 0.88f + 0.12f * k
+                    scaleX = sc
+                    scaleY = sc
+                    alpha = k.coerceIn(0f, 1f)
+                }
+                .pointerInput(Unit) { detectTapGestures { } }           // a tap on the panel does not close it
+                .liquidCard(bd, shape, dark)
+                .background(if (dark) Color(0xFF14161B).copy(alpha = 0.55f) else Color.White.copy(alpha = 0.45f), shape)
+                .padding(horizontal = 18.dp, vertical = 18.dp)
+                .verticalScroll(rememberScrollState())
+        ) {
+            BasicText(title, style = TextStyle(color = fg, fontSize = 19.sp, fontWeight = FontWeight.Bold))
+            Spacer(Modifier.height(3.dp))
+            BasicText(hint, style = TextStyle(color = fg.copy(alpha = 0.6f), fontSize = 12.sp, lineHeight = 17.sp))
+            Spacer(Modifier.height(12.dp))
+            Box(Modifier.fillMaxWidth().height(1.dp).background(fg.copy(alpha = 0.12f)))
+            Spacer(Modifier.height(8.dp))
+            content()
+        }
+    }
+}
+
+/** One supervisor inside the "supervisors' permissions" panel: who he is and his three switches (owner only). */
+@Composable
+private fun AdminPermsBlock(
+    uid: String,
+    perms: Set<String>,
+    bd: Backdrop,
+    dark: Boolean,
+    fg: Color,
+    onPerm: (String, Boolean) -> Unit
+) {
+    val context = LocalContext.current
+    LaunchedEffect(uid) {
+        MemberDirectory.request(uid)
+        UserPhotos.request(context, uid)
+    }
+    val info = MemberDirectory.info[uid]
+    val name = info?.name ?: ""
+    val username = info?.username.orEmpty()
+    val photo = UserPhotos.photos[uid]
+
+    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Avatar(photo, name, 40.dp)
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                BasicText(
+                    name.ifBlank { "…" },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = TextStyle(color = fg, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                )
+                if (username.isNotEmpty()) {
+                    BasicText(
+                        "@$username",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = TextStyle(color = fg.copy(alpha = 0.55f), fontSize = 12.sp)
+                    )
+                }
+            }
+        }
+        OptionSwitch(
+            title = stringResource(R.string.perm_ban),
+            sub = stringResource(R.string.perm_ban_sub),
+            selected = Perm.BAN in perms,
+            onSelect = { on -> onPerm(Perm.BAN, on) },
+            bd = bd, dark = dark, fg = fg
+        )
+        OptionSwitch(
+            title = stringResource(R.string.perm_kick),
+            sub = stringResource(R.string.perm_kick_sub),
+            selected = Perm.KICK in perms,
+            onSelect = { on -> onPerm(Perm.KICK, on) },
+            bd = bd, dark = dark, fg = fg
+        )
+        OptionSwitch(
+            title = stringResource(R.string.perm_edit),
+            sub = stringResource(R.string.perm_edit_sub),
+            selected = Perm.EDIT in perms,
+            onSelect = { on -> onPerm(Perm.EDIT, on) },
+            bd = bd, dark = dark, fg = fg
+        )
+    }
+}
+
+/** Shown to a RESTRICTED member instead of the members: he can read the channel, nothing more. */
+@Composable
+private fun RestrictedNote(fill: Color, fg: Color) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(24.dp))
+            .background(fill)
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        GlyphIcon(R.drawable.ic_lock, EditOrange, 22.dp)
+        Spacer(Modifier.width(12.dp))
+        BasicText(
+            stringResource(R.string.restricted_me_note),
+            modifier = Modifier.weight(1f),
+            style = TextStyle(color = fg.copy(alpha = 0.8f), fontSize = 14.sp, lineHeight = 20.sp)
+        )
+    }
+}
+
+/** A quiet line inside a panel that has nothing to show. */
+@Composable
+private fun EmptyNote(text: String, fg: Color) {
+    BasicText(
+        text,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 18.dp),
+        style = TextStyle(color = fg.copy(alpha = 0.55f), fontSize = 14.sp, lineHeight = 20.sp, textAlign = TextAlign.Center)
+    )
 }

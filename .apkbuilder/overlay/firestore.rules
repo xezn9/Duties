@@ -21,7 +21,9 @@ rules_version = '2';
 // channels.adminTitles: map  uid -> the custom name the owner gave to that supervisor (shown instead of "Supervisor").
 //                      Written only by the owner (a text of at most 14 characters, set by the app).
 // channels.banned     : list of uids that are banned from the channel (written by the owner or by a supervisor with "ban")
-// channels.restricted : OLD field of the removed "restrict" feature. Still allowed so old channels stay valid; not used.
+// channels.restricted : list of uids of RESTRICTED members: they stay inside and can read, but the list of members is hidden
+//                      from them (the app does it). Written by the owner or by a supervisor with the "ban" permission
+//                      (neither can restrict the owner or a supervisor).
 // invites/{channelId}_{uid} : an invitation to a channel (pending / accepted / declined)
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -132,6 +134,19 @@ service cloud.firestore {
         && a.get('banned', []).removeAll(b.get('banned', [])).size() == 0;
     }
 
+    // "restrict": exactly one uid is added to "restricted" (not the owner, not a supervisor), nobody else changes
+    function restrictsOne(b, a) {
+      return a.get('restricted', []).removeAll(b.get('restricted', [])).size() == 1
+        && b.get('restricted', []).removeAll(a.get('restricted', [])).size() == 0
+        && !a.get('restricted', []).removeAll(b.get('restricted', [])).hasAny(b.get('admins', []).concat([b.ownerUid]));
+    }
+
+    // lifting a restriction: exactly one uid leaves "restricted"
+    function unrestrictsOne(b, a) {
+      return b.get('restricted', []).removeAll(a.get('restricted', [])).size() == 1
+        && a.get('restricted', []).removeAll(b.get('restricted', [])).size() == 0;
+    }
+
     // every signed-in account can find and read a channel (the Home search needs it); the chat messages themselves
     // stay private (they live in the Realtime Database and only the members can read them).
     // A person that was invited can add himself to "members" (only one name, only while his invitation is still pending)
@@ -186,6 +201,10 @@ service cloud.firestore {
         || (adminHas(resource.data, 'ban')
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['banned'])
           && unbansOne(resource.data, request.resource.data))
+        // a supervisor with the "ban" permission: restricts one ordinary member, or frees one
+        || (adminHas(resource.data, 'ban')
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['restricted'])
+          && (restrictsOne(resource.data, request.resource.data) || unrestrictsOne(resource.data, request.resource.data)))
       );
       allow delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
     }

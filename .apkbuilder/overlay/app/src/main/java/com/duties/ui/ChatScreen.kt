@@ -42,6 +42,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -174,11 +175,13 @@ internal fun ChatMorph(
     // the profile of a person (opens from his photo in the chat, see UserProfile.kt)
     var profile by remember { mutableStateOf<ProfileTarget?>(null) }
     var profileOpen by remember { mutableStateOf(false) }
-    // the channel page (name, @username, photo, members) that opens from the name bar at the top (see ChannelEdit.kt)
-    var editOpen by remember { mutableStateOf(false) }
-    var editFrom by remember { mutableStateOf(Rect.Zero) }
-    LaunchedEffect(open) { if (!open) editOpen = false }
-    BackHandler(enabled = open && target != null && profile == null && !editOpen) { close() }
+    // the channel page (name, @username, photo, members) that opens from the name bar at the top (see ChannelEdit.kt).
+    // It uses the HyperSpring push, like the edit-account page: the chat dissolves, the name bar grows into the page and
+    // the parts of the page come out of it (PushStack below)
+    val editScope = rememberCoroutineScope()
+    val editPush = remember { PushController(editScope) }
+    LaunchedEffect(open) { if (!open && editPush.request != null) editPush.close() }
+    BackHandler(enabled = open && target != null && profile == null && editPush.request == null) { close() }
     // a photo was tapped (in the chat or in the members list): its profile grows out of it
     val openProfile: (ProfileTarget) -> Unit = { pt ->
         if (profile == null) {
@@ -222,37 +225,43 @@ internal fun ChatMorph(
             ) {
                 // the newest copy of the channel: after an edit (name / photo) the header changes by itself
                 val live = channels.channels.firstOrNull { it.id == t.channel.id } ?: t.channel
-                ChatContent(
-                    channel = live,
-                    dark = dark,
-                    uid = uid,
-                    senderName = senderName,
-                    myPhoto = myPhoto,
-                    reveal = { 1f },
-                    onBack = close,
-                    onAvatarClick = openProfile,
-                    onHeaderClick = { r ->
-                        if (!editOpen && profile == null) {
-                            focus.clearFocus()
-                            keyboard?.hide()
-                            editFrom = r
-                            editOpen = true
-                        }
+                PushStack(
+                    controller = editPush,
+                    modifier = Modifier.fillMaxSize().background(if (dark) Color.Black else Color(0xFFF4F5F9)),
+                    edgeLine = false,
+                    growFromSource = true,
+                    detail = {
+                        // the channel page: grows out of the name bar, slides away to the right when it closes
+                        ChannelEditPage(
+                            channel = live,
+                            channels = channels,
+                            dark = dark,
+                            uid = uid,
+                            myName = senderName,
+                            myPhoto = myPhoto,
+                            onClose = { editPush.close() },
+                            onOpenProfile = openProfile
+                        )
                     }
-                )
-                // the channel page: grows out of the name bar, slides away together with the chat
-                ChannelEditMorph(
-                    open = editOpen,
-                    from = editFrom,
-                    channel = live,
-                    channels = channels,
-                    dark = dark,
-                    uid = uid,
-                    myName = senderName,
-                    myPhoto = myPhoto,
-                    onClose = { editOpen = false },
-                    onOpenProfile = openProfile
-                )
+                ) {
+                    ChatContent(
+                        channel = live,
+                        dark = dark,
+                        uid = uid,
+                        senderName = senderName,
+                        myPhoto = myPhoto,
+                        reveal = { 1f },
+                        onBack = close,
+                        onAvatarClick = openProfile,
+                        onHeaderClick = { r ->
+                            if (editPush.request == null && profile == null) {
+                                focus.clearFocus()
+                                keyboard?.hide()
+                                editPush.open("edit", r.takeIf { it.width > 1f && it.height > 1f })
+                            }
+                        }
+                    )
+                }
             }
 
             // ---- the profile of the person whose photo was tapped: grows out of that photo (same animation)
